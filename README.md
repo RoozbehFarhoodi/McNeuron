@@ -24,7 +24,7 @@ The script is stolen from [here](https://github.com/jacobgil/keras-dcgan/blob/ma
 Clone the repository.
 
 ```bash
-$ git clone https://github.com/KordingLab/Generative-Models-of-Neuron-Morphology
+$ git clone https://github.com/RoozbehFarhoodi/McNeuron
 ```
 ## Dependencies
 
