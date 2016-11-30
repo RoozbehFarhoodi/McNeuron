@@ -1,5 +1,5 @@
 # Generative Models of Neuron Morphology
-[![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat)](https://github.com/titipata/pubmed_parser/blob/master/LICENSE) 
+[![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat)](https://github.com/RoozbehFarhoodi/McNeuron/blob/master/LICENCE) 
 
 The goals is to make a generative model for the neurons. The input of each algorithm is a database of the neurons and the output is the generated neurons that looks like the same in morphology. 
 Here we pursuit two approaches:
