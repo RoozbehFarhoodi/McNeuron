@@ -18,6 +18,7 @@ import matplotlib.animation as animation
 import pylab as pl
 from matplotlib import collections  as mc
 from PIL import Image
+from numpy.linalg import inv
 
 from McNeuron import Neuron
 from McNeuron import Node
@@ -292,6 +293,9 @@ def plot_2d(neuron, show_depth, line_width):
     pl.axis('off')
     pl.xlim((min(p[0,:]),max(p[0,:])))
     pl.ylim((min(p[1,:]),max(p[1,:])))
+
+def plot_dendograph(neuron):
+    print 1
 
 def plot_2D(neuron,
             background = 1,
@@ -737,111 +741,83 @@ def plot_3D_Forest(neuron, color_scheme="default", save_image=None):
         plt.savefig(save_image)
 
     return fig
+def important_node_full_matrix(neuron):
+    lines = []
+    (branch_index,)  = np.where(neuron.branch_order==2)
+    (end_nodes,)  = np.where(neuron.branch_order==0)
+    important_node = np.append(branch_index,end_nodes)
+    parent_important = neuron.parent_index_for_node_subset(important_node)
+    important_node = np.append(0, important_node)
+    L = []
+    for i in parent_important:
+        (j,) = np.where(important_node==i)
+        L = np.append(L,j)
+    matrix = np.zeros([len(L),len(L)])
+    for i in range(len(L)):
+        if(L[i]!=0):
+            matrix[i,L[i]-1] = 1
+    B = inv(np.eye(len(L)) - matrix)
+    return B
 
-def plot_dendrogram(neuron,transform='plain',shift=0,c='k',radius=True,rm=20000.0,ra=200,outN=None) :
+def decompose_immediate_children(matrix):
     """
-    Generate a dendrogram from an SWC file. The SWC has to be formatted with a "three point soma"
-
     Parameters
-    -----------
-    file_name : string
-        File name of the SWC file to plots
-    transform : string
-        Either 'plain' or 'lambda'. Plain means no transform while 'lambda' performs an elecotrtonic transform
-    shift : float
-        Offset in the x-direction
-    c : string
-        Color ('r','g', 'b', ...)
-    radius : boolean
-        Plot a wire (False) dendrogram or one with the thickness of the processes (True)
-    rm : float
-       Membrane resistance. Only needed when transform = 'lambda'
-    rm : float
-       Axial resistance. Only needed when transform = 'lambda'
-    outN : string
-        File name of the output file. Extension of this file sets the file type
+    ----------
+    matrix : numpy array of shape (n,n)
+        The matrix of connetion. matrix(i,j) is one is j is a grandparent of i.
+
+    Return
+    ------
+    L : list of numpy array of square shape
+        L consists of decomposition of matrix to immediate children of root.
     """
-    global C, RM, RA, max_width, max_height # n.a.s.t.y.
+    a = matrix.sum(axis = 1)
+    (children,) = np.where(a == 1)
+    L = []
+    for ch in children:
+        (ind,) = np.where(matrix[:,ch]==1)
+        ind = ind[ind!=ch]
+        L.append(matrix[np.ix_(ind,ind)])
+    p = np.zeros(len(L))
+    for i in range(len(L)):
+        p[i] = L[i].shape[0]
+    s = np.argsort(p)
+    List = []
+    for i in range(len(L)):
+        List.append(L[s[i]])
+    return List
 
-    swc_tree = neuron.tree
-    RM = rm
-    RA = ra
-    C = c
-    max_height = 0
-    max_width = 0
-    plt.clf()
-    print 'Going to build the dendrogram. This might take a while...'
-    ttt = time.time()
-    _expand_dendrogram(swc_tree.root,swc_tree,shift,0,radius=radius,transform=transform)
-    if(transform == 'plain') :
-        plt.ylabel('L (micron)')
-    elif(transform == 'lambda') :
-        plt.ylabel('L (lambda)')
-    print (time.time() - ttt), ' later the dendrogram was finished. '
+def box(x_min, x_max, y, matrix, line):
+    """
+    The box region for each node in the tree.
 
-    print 'max_widht=%f, max_height=%f' % (max_width,max_height)
-    x_bound = (max_width / 2.0) + (0.1*max_width)
-    max_y_bound = max_height + 0.1*max_height
-    plt.axis([-1.0*x_bound,x_bound,-0.1*max_height,max_y_bound])
+    """
+    L = decompose_immediate_children(matrix)
+    length = np.zeros(len(L)+1)
+    for i in range(1,1+len(L)):
+        length[i] = L[i-1].shape[0] + 1
 
-    plt.plot([x_bound,x_bound],[0,100],'k', linewidth=5) # 250 for MN, 100 for granule
+    for i in range(len(L)):
+        x_left = x_min + (x_max-x_min)*(sum(length[0:i+1])/sum(length))
+        x_right = x_min + (x_max-x_min)*(sum(length[0:i+2])/sum(length))
+        line.append([((x_min + x_max)/2., y),((x_left + x_right)/2.,y-1)])
+        if(L[i].shape[0] > 0):
+            box(x_left, x_right, y-1, L[i], line)
+    return line
 
-    frame1 = plt.gca()
-    frame1.axes.get_xaxis().set_visible(False)
-    frame1.axes.get_yaxis().set_visible(False)
-
-    if(outN != None) :
-        plt.savefig(outN)
-
-def _expand_dendrogram(cNode,swc_tree,off_x,off_y,radius,transform='plain') :
-    global max_width,max_height # middle name d.i.r.t.y.
-    '''
-    Gold old fashioned recursion... sys.setrecursionlimit()!
-    '''
-    place_holder_h = H_SPACE
-    max_degree = swc_tree.degree_of_node(cNode)
-    required_h_space = max_degree * place_holder_h
-    start_x = off_x-(required_h_space/2.0)
-    if(required_h_space > max_width) :
-        max_width = required_h_space
-
-    if swc_tree.is_root(cNode) :
-        print 'i am expanding the root'
-        cNode.children.remove(swc_tree.get_node_with_index(2))
-        cNode.children.remove(swc_tree.get_node_with_index(3))
-
-    for cChild in cNode.children :
-        l = _path_between(swc_tree,cChild,cNode,transform=transform)
-        r = cChild.content['p3d'].radius
-
-        cChild_degree = swc_tree.degree_of_node(cChild)
-        new_off_x = start_x + ( (cChild_degree/2.0)*place_holder_h )
-        new_off_y = off_y+(V_SPACE*2)+l
-        r = r if radius  else 1
-        plt.vlines(new_off_x,off_y+V_SPACE,new_off_y,linewidth=r,colors=C)
-        if((off_y+(V_SPACE*2)+l) > max_height) :
-            max_height = off_y+(V_SPACE*2)+l
-
-        _expand_dendrogram(cChild,swc_tree,new_off_x,new_off_y,radius=radius,transform=transform)
-
-        start_x = start_x + (cChild_degree*place_holder_h)
-        plt.hlines(off_y+V_SPACE,off_x,new_off_x,colors=C)
-
-def _path_between(swc_tree,deep,high,transform='plain') :
-    path = swc_tree.path_to_root(deep)
-    pl = 0
-    pNode = deep
-    for node in path[1:] :
-        pPos = pNode.content['p3d'].xyz
-        cPos = node.content['p3d'].xyz
-        pl = pl + np.sqrt(np.sum((cPos-pPos)**2))
-        #pl += np.sqrt( (pPos.x - cPos.x)**2 + (pPos.y - cPos.y)**2 + (pPos.z - cPos.z)**2 )
-        pNode = node
-        if(node == high) : break
-
-    if(transform == 'plain'):
-        return pl
-    elif(transform == 'lambda') :
-        DIAM = (deep.content['p3d'].radius*2.0 + high.content['p3d'].radius*2.0) /2.0 # naive...
-        c_lambda = np.sqrt(1e+4*(DIAM/4.0)*(RM/RA))
-        return pl / c_lambda
+def plot_dedrite_tree(neuron, save = []):
+    B = important_node_full_matrix(neuron)
+    L = decompose_immediate_children(B)
+    l = box(0.,1.,0.,B,[])
+    min_y = 0
+    for i in l:
+        min_y = min(min_y, i[1][1])
+    lc = mc.LineCollection(l)
+    fig, ax = plt.subplots()
+    ax.add_collection(lc)
+    plt.axis('off')
+    plt.xlim((0,1))
+    plt.ylim((min_y,0))
+    plt.draw()
+    if(len(save)!=0):
+        plt.savefig(save, format = "eps")

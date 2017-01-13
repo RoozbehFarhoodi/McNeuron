@@ -18,17 +18,21 @@ from scipy.stats import vonmises
 from scipy.stats import norm
 from scipy.stats import multivariate_normal
 from numpy.linalg import inv
+import scipy.special
 #np.random.seed(500)
 
-class Perturbation(object):
+class MCMC(object):
 
     def __init__(self,
                 neuron = None,
                 measures_on_features = None,
-                perturbations_list = None,
+                MCMCs_list = None,
                 n_node = 10,
-                perturbation_prob = None,
+                initial_seg = 4,
+                MCMC_prob = None,
                 iterations = 100,
+                mean_len_to_parent = 5,
+                var_len_to_parent = 1,
                 verbose = 0):
         """
         Default class for perturbation doing MCMC over a set of features
@@ -50,15 +54,10 @@ class Perturbation(object):
                 Wrapped Normal distribution: for continous and limited values (e.g. angles,...)
                 Normal distribution: for real and continous feature (e.g. 3D vector approximation of a neuron)
 
-        perturbations_list: list :class: str
-            List of all operation for MCMC. Right now the package supports 3 operations:
-                extension/reduction: extends or reduce one node from the neuron; the selected node can be any node with non-branching point.
-                for end points two options of extension and reduction exist. The root also may extend.
-                diameter: change the diameter of one of the nodes
-                location:change the location of one of the nodes
-            The default is perturbations_list = ['extension/reduction','location','diameter']
+        MCMCs_list: list
+            List of all proposals for MCMC. see do_MCMC function for details of all proposals
 
-        perturbation_prob: `numpy array`
+        MCMC_prob: `numpy array`
             The probability of choosing one of the operations
 
         iterations: integer
@@ -69,10 +68,11 @@ class Perturbation(object):
             1: for saving the evolution neuron by saving all intermediae neurons.
             2: for saving the intermediate neuron in addition to feature diagram of them.
         """
-        self.ratio_red_to_ext = 20.
+        self.ratio_red_to_ext = 1.
         self.n_node = n_node
+        self.initial_seg = initial_seg
         if(neuron == None): # make a simple neuron with one soma and one apical node
-            self.neuron = self.initial_neuron(self.n_node)
+            self.neuron = self.initial_neuron(int(self.n_node/self.initial_seg),self.initial_seg)
         else:
             self.neuron = neuron
 
@@ -85,20 +85,22 @@ class Perturbation(object):
         else:
             self.measure = measures_on_features
 
-        if(perturbations_list == None):
+        if(MCMCs_list == None):
             self.p_list = ['extension/reduction','extension/reduction end points','sliding', 'add/remove', 'location', 'location for important point', 'location toward end', 'diameter', 'diameter_toward', 'rotation for any node', 'rotation for branching' , 'sliding general', 'rescale toward end',  'sliding certain in distance','sliding for branching node', 'stretching vertical', 'stretching horizental', 'sinusidal']
         else:
-            self.p_list = perturbations_list
+            self.p_list = MCMCs_list
 
-        if(perturbation_prob == None):
+        if(MCMC_prob == None):
             self.p_prob  = np.array([.01,.09,.65,.25,.1])
         else:
-            self.p_prob = perturbation_prob
-
+            self.p_prob = MCMC_prob
+        self.erf = 0.5*(3+scipy.special.erf(-mean_len_to_parent/np.sqrt(2)))
+        self.mean_len_to_parent = mean_len_to_parent
+        self.var_len_to_parent = var_len_to_parent
         self._consum_prob = np.array([sum(self.p_prob[0:i]) for i in range(len(self.p_prob))])
         self.ite = iterations
         self.verbose = verbose
-        self.trace_perturbation = [0, self.neuron]
+        self.trace_MCMC = [0, self.neuron]
         self.cte_gauss = 1/np.sqrt(2*np.pi)
         self.kappa = 4.
         self.kappa_rotation = 50.
@@ -118,12 +120,13 @@ class Perturbation(object):
         self.location = .1
         self.location_important = .1
         self.sinusidal_hight = .01
+        self.evo = []
 
         #self.trend = np.zeros([len(self.measure['mean']),self.ite])
 
     def fit(self):
         """
-        The main function for MCMC. It starts with current neuron and in each iteration selects one of the pertubations form the probability distribution of perturbation_prob and does it on the neuron.
+        The main function for MCMC. It starts with current neuron and in each iteration selects one of the pertubations form the probability distribution of MCMC_prob and does it on the neuron.
         """
         # if self.verbose == 1:
         #     print ('The list of all perturbation with its probability: \n')
@@ -138,15 +141,15 @@ class Perturbation(object):
                 p_current, er , error_vec_normal_current = self.kl_distance(self.neuron)
                 #print('feature of current is: \n %s' %(self.neuron.features)+ '\n')
                 print('\n and its probability is: %s' %p_current)
-            per = self.select_perturbation() # perturbation index
-            p_sym, details = self.do_perturbation(per)
+            per = self.select_proposal() # MCMC index
+            p_sym, details = self.do_MCMC(per)
             #p_proposal, error_vec_proposal, error_vec_normal_proposal = self.minus_log_prob_neuron(self.neuron)
             p_proposal, error_vec_proposal, error_vec_normal_proposal = self.kl_distance(self.neuron)
             if(self.verbose ==1):
                 #print('feature of proposal is: \n %s' %(self.neuron.features))
                 print('\n and its probability is: %s' %p_proposal)
             a = min(1, p_sym * np.exp(p_current - p_proposal)) # Metropolis choice, notice that the values are minus log probability
-            B = self.accept_perturbation(a) # the boolean of acceptance
+            B = self.accept_proposal(a) # the boolean of acceptance
             if(B):
                 p_current = p_proposal
                 error_vec_current = error_vec_proposal
@@ -155,11 +158,11 @@ class Perturbation(object):
                 self.trend_normal[:,i] = error_vec_normal_proposal
                 acc = acc + 1
             else:
-                self.undo_perturbation(per, details)
+                self.undo_MCMC(per, details)
                 self.trend[:,i] = error_vec_current
                 self.trend_normal[:,i] = error_vec_normal_current
             if len(self.neuron.nodes_list) == self.neuron.n_soma:
-                self.neuron = self.initial_neuron()
+                self.neuron = self.initial_neuron(int(self.n_node/self.initial_seg),self.initial_seg)
                 #p_current, error_vec_current, error_vec_normal_current = self.minus_log_prob_neuron(self.neuron)
                 p_current, error_vec_current, error_vec_normal_current = self.kl_distance(self.neuron)
             if(self.verbose ==1):
@@ -167,8 +170,8 @@ class Perturbation(object):
                 print('Selected perturbation = ' + per)
                 print('the p of acceptance was %s and it was %s that it`s been accepted.'%(a,B))
                 print ('\n')
-            #if(np.remainder(i,100)==0):
-            #    visualize.plot_2D(self.neuron)
+            if(np.remainder(i,100)==0):
+                self.evo.append(deepcopy(self.neuron))
         self.neuron.set_nodes_values()
         print acc
 
@@ -189,7 +192,7 @@ class Perturbation(object):
     def set_n_iteration(self, n):
         self.ite = n
 
-    def initial_neuron(self,n):
+    def initial_neuron(self,n, k = 1):
         L = []
         root = Node()
         root.r = .2
@@ -204,24 +207,25 @@ class Perturbation(object):
             L.append(soma)
             root.add_child(soma)
             soma.parent = root
-        for i in range(n):
-            node = Node()
-            node.r = .2
-            node.type = 'apical'
-            node.xyz = np.array([10*i,0.,0.],dtype = float)#+0*np.random.rand(3)
+        for j in range(k):
+            for i in range(n):
+                node = Node()
+                node.r = .2
+                node.type = 'apical'
+                node.xyz = np.array([np.sin(j*2*np.pi/k)*10*(i+1),np.cos(j*2*np.pi/k)*10*(i+1),0.],dtype = float)#+0*np.random.rand(3)
 
-            if i == 0:
-                root.add_child(node)
-                node.parent = root
-                L.append(node)
-            else:
-                L[-1:][0].add_child(node)
-                node.parent = L[-1:][0]
-                L.append(node)
+                if i == 0:
+                    root.add_child(node)
+                    node.parent = root
+                    L.append(node)
+                else:
+                    L[-1:][0].add_child(node)
+                    node.parent = L[-1:][0]
+                    L.append(node)
         neuron = Neuron(file_format = 'only list of nodes', input_file = L)
         return neuron
 
-    def do_perturbation(self,per):
+    def do_MCMC(self, per):
         if per == 'extension/reduction': # do extension/reduction
             p_sym, details = self.do_ext_red(self.neuron)
         if per == 'extension/reduction end points': # do extension/reduction end points
@@ -323,7 +327,7 @@ class Perturbation(object):
         p_sym = 1
         return p_sym, details
 
-    def select_perturbation(self):
+    def select_proposal(self):
         (I,) = np.where(self._consum_prob >= np.random.random_sample(1,))
         return self.p_list[min(I)]
 
@@ -436,9 +440,8 @@ class Perturbation(object):
         """
         Add or remove a node in the neuron. Adding can be done by selecting one random node in the tree
         and add a node as its parent. Removing can be done by selecting a random order one node.
-        The poition of the new node is along an ellipsoid with the center of the two connected nodes.
         """
-        total_number_current ,random_node, state = self.get_random_element_for_add_remove(neuron)
+        random_node, state = self.get_random_element_for_add_remove(neuron)
         if state is 'add':
             neuron.add_extra_node(random_node)
         if state is 'remove':
@@ -499,11 +502,12 @@ class Perturbation(object):
     def do_rotation_branching(self, neuron, kappa):
         node = neuron.get_random_branching_node()
         details = [0,0]
-        node = node.children[np.floor(2*np.random.rand()).astype(int)]
         if node.type is 'empty':
             details[0] = neuron.get_random_no_soma_node()
             details[1] = np.eye(3)
+
         else:
+            node = node.children[np.floor(2*np.random.rand()).astype(int)]
             matrix = self.random_unitary_basis(kappa)
             neuron.rotate_from_branch(node, matrix)
             details[0] = node
@@ -536,7 +540,7 @@ class Perturbation(object):
         neuron.rescale_toward_end(node, re)
         return p_sym, details
 
-    def undo_perturbation(self, per, details):
+    def undo_MCMC(self, per, details):
         """
         when per == 0, details[0] is 'ext' of 'remove'. If it is 'ext', then details[1] is node_index.
         if it is 'remove', details[1] = parent, details[2] = location, details[3] = ratio
@@ -668,6 +672,10 @@ class Perturbation(object):
             self._consum_prob[i] = sum(self.p_prob[:i+1])
 
     def set_real_neuron(self, neuron, m):
+        """
+        Set the desire features by the features of given neuron. No dependency.
+
+        """
         self.list_features = m['hist_range'].keys()
         self.n_features = len(self.list_features)
         self.mean_hist = {}
@@ -703,6 +711,15 @@ class Perturbation(object):
         rv = multivariate_normal(np.zeros(dim), self.var*np.eye(dim))
         pdf = rv.pdf(random_point)
         return random_point, pdf
+
+    def random_vector(self, mean, var):
+        vec = np.random.normal(size = 3)
+        vec = vec/LA.norm(vec,2)
+        l = -1
+        while(l<0):
+            l = mean + var * np.random.normal()
+        vec = vec*l
+        return vec
 
     def get_random_element_for_add_remove(self, neuron):
         (ind1,) = np.where(neuron.branch_order[neuron.n_soma:] == 1)
@@ -789,7 +806,7 @@ class Perturbation(object):
         if node.parent.type is 'soma':
             return np.array([1.,.0,.0])
         else:
-            return self.neuron._xyz(node)
+            return self.neuron.xyz(node)
 
     def extend_soma(self, neuron):
         #r, pdf_r = self.normal(self.mean_ratio_diameter,1)
@@ -797,14 +814,27 @@ class Perturbation(object):
 
         #r, pdf_r = self.normal(self.mean_ratio_diameter,1)
         r = 0
-        pdf_r = 1
-        l, pdf_l = self.normal(3)
-
+        l = self.random_vector(self.mean_len_to_parent, self.var_len_to_parent)
         n = neuron.extend_node('soma', l , np.exp(r))
         details = [0,0]
         details[0] = 'ext'
         details[1] = n
-        p_sym = 1./((pdf_r*pdf_l)*self.ratio_red_to_ext)
+        p_sym = self.ratio_red_to_ext
+        return details, p_sym
+
+    def extend_node(self, neuron, node_index):
+        node = neuron.nodes_list[node_index]
+        #r, pdf_r = self.normal(self.mean_ratio_diameter,1)
+        #par_loc = self.vector_par(self.neuron.nodes_list[node_index])
+        #l, pdf_l = self.random_rotation(par_loc, self.mu, self.kappa, self.n_chi)
+        #r, pdf_r = self.normal(self.mean_ratio_diameter,1)
+        r = 0
+        l = self.random_vector(self.mean_len_to_parent, self.var_len_to_parent)
+        n = neuron.extend_node(node,l,np.exp(r))
+        details = [0,0]
+        details[0] = 'ext'
+        details[1] = n
+        p_sym = self.ratio_red_to_ext
         return details, p_sym
 
     def remove_node(self, neuron, node_index):
@@ -817,24 +847,7 @@ class Perturbation(object):
         details[3] = r
         #p_sym = norm.pdf(np.log(r),0,self.mean_ratio_diameter)*self.pdf_random_rotation(l, par_loc, self.mu, self.kappa, self.n_chi)
         #p_sym = self.pdf_normal(np.log(r), self.mean_ratio_diameter, 1)*self.pdf_normal(l,self.mean_loc, 3)
-        p_sym = self.ratio_red_to_ext/self.pdf_normal(l, 3)
-        return details, p_sym
-
-    def extend_node(self, neuron, node_index):
-        node = neuron.nodes_list[node_index]
-        #r, pdf_r = self.normal(self.mean_ratio_diameter,1)
-        #par_loc = self.vector_par(self.neuron.nodes_list[node_index])
-        #l, pdf_l = self.random_rotation(par_loc, self.mu, self.kappa, self.n_chi)
-
-        #r, pdf_r = self.normal(self.mean_ratio_diameter,1)
-        r = 0
-        pdf_r = 1
-        l, pdf_l = self.normal(3)
-        n = neuron.extend_node(node,l,np.exp(r))
-        details = [0,0]
-        details[0] = 'ext'
-        details[1] = n
-        p_sym = (pdf_r*pdf_l)/self.ratio_red_to_ext
+        p_sym = 1./(self.ratio_red_to_ext)
         return details, p_sym
 
     def minus_log_prob_neuron(self, neuron):
@@ -858,6 +871,8 @@ class Perturbation(object):
         error_vec = np.zeros(self.n_features)
         error_vec_normal = np.zeros(self.n_features)
         for k in range(self.n_features):
+            if(self.verbose == 1):
+                print self.list_features[k]
             name = self.list_features[k]
             feature = neuron.features[name]
             feature = feature[~np.isnan(feature)]
@@ -878,7 +893,7 @@ class Perturbation(object):
             er += E
         return er, error_vec, error_vec_normal
 
-    def accept_perturbation(self, a):
+    def accept_proposal(self, a):
         return (a > np.random.random_sample(1,))[0]
 
     def select_non_zero_element_with_soma(self, matrix):
@@ -914,13 +929,13 @@ class Perturbation(object):
         x = (r-y)/b
         return x,y
 
-    def show_perturbation(self,start,size_x,size_y):
+    def show_MCMC(self,start,size_x,size_y):
         plt.figure(figsize=(size_x,size_y))
         plt.subplot(1,3,1)
         plt.plot(sum(self.trend[:,start:],0));
         plt.subplot(1,3,2)
         plt.plot(np.transpose(self.trend_normal[:,start:]));
-        plt.legend(self.list_features,bbox_to_anchor=(2.1,1.1))
+        #plt.legend(self.list_features,bbox_to_anchor=(2.1,1.1))
         plt.subplot(1,3,3)
         plt.plot(np.transpose(self.trend[:,start:]));
         plt.legend(self.list_features,bbox_to_anchor=(2.1,1.1))

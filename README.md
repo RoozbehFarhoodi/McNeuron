@@ -41,7 +41,7 @@ $ git clone https://github.com/RoozbehFarhoodi/McNeuron
 
 ## Acknowledgement
 
-- [Konrad Koerding](http://kordinglab.com) for support
+- [Konrad Koerding](http://kordinglab.com)
 - [COGC](http://cogc.ir/) for funding
 - Package is developed in [Konrad Kording's Lab](http://kordinglab.com/) at Northwestern University
 

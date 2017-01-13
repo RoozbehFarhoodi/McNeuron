@@ -100,7 +100,12 @@ class Neuron(object):
     def __init__(self, file_format = None, input_file = None):
 
         """
-        Default constructor.
+        Default constructor. There are three ways of representing the neuron.
+            In 'swc' the swc file in given and the output is a Neuron calss with all of its attributes.
+
+            In 'swc without attributes' the swc file in given and the output is a Neuron calss without its attributes. It's useful for the case that only nodes are important, e.g. visualization of the neurpn, in a fast way.
+
+            In 'only list of nodes' the list of all the nodes of the neuron is given.
         """
         if(file_format == 'swc'): # swc is given
             self.read_swc(input_file)
@@ -111,6 +116,10 @@ class Neuron(object):
             self.parent_index = self.parent_index.astype(int)
             #self.set_loc_diam()
             self.fit()
+        if(file_format == 'swc without attributes'):
+            self.read_swc(input_file)
+            self.set_parent()
+            self.parent_index = self.parent_index.astype(int)
         if(file_format == 'only list of nodes'):
             self.nodes_list =  input_file
             self.root = self.find_root(self.nodes_list[0])
@@ -119,10 +128,6 @@ class Neuron(object):
             self.parent_index = self.parent_index.astype(int)
             self.set_loc_diam()
             self.fit()
-        if(file_format == 'swc without attributes'):
-            self.read_swc(input_file)
-            self.set_parent()
-            self.parent_index = self.parent_index.astype(int)
 
 
         #self.set_sholl()
@@ -158,7 +163,6 @@ class Neuron(object):
         self.set_distance_from_parent()
         self.set_connection2()
         #self.set_rall_ratio()
-        #self.set_slope() # the ratio of: delta(pos)/delta(radius)
         self.set_branch_angle()
         self.set_global_angle()
         self.set_local_angle()
@@ -184,11 +188,8 @@ class Neuron(object):
         #self.features['asymetric']
         (num_branches,) = np.where(self.branch_order[self.n_soma:] == 2)
         self.features['Nbranch'] = np.array([len(num_branches)])
-        (num_terminals,) = np.where(self.branch_order[self.n_soma:] == 0)
-        self.features['Nendpoint'] = np.array([len(num_terminals)])
         self.features['initial_segments'] = np.array([len(self.root.children)])
         self.features['global_angle'] = np.pi - self.global_angle[self.n_soma:]
-        #self.features['slope'] = self.slope[self.n_soma:]
         #self.features['diameter'] = self.diameter[self.n_soma:]
         self.features['distance_from_parent'] = self.distance_from_parent[self.n_soma:]
         self.features['distance_from_root'] = self.distance_from_root[self.n_soma:]
@@ -204,15 +205,21 @@ class Neuron(object):
         self.features['discrepancy_space'] = np.array([self.discrepancy(10.,10.,10.)])
         #self.features['repellent'] = np.array([self.repellent(10.,10.,10.)])
         self.features['curvature'] = self.set_curvature()
-        (branch_index,)  = np.where(self.branch_order==2)
-        (end_nodes,)  = np.where(self.branch_order==0)
-        important_node = np.append(branch_index,end_nodes)
+        important_node = self.important_nodes()
         parent_important = self.parent_index_for_node_subset(important_node)
         (neural, euclidan) = self.set_neural_euclid_branch(important_node, parent_important)
         self.features['neural_important'] = neural
         self.features['euclidian_important'] = euclidan
         self.features['ratio_neural_euclidian_important'] = neural/euclidan
         self.features['branch_angle_segment'] = self.set_branch_angle_segment(important_node, parent_important)
+
+    def important_nodes(self):
+        (branch_index,)  = np.where(self.branch_order[self.n_soma:]==2)
+        (end_nodes,)  = np.where(self.branch_order[self.n_soma:]==0)
+        important_node = np.append(branch_index,end_nodes)
+        if(len(important_node)!=0):
+            important_node = self.n_soma + important_node
+        return important_node
 
     def set_neural_euclid_branch(self, important_node, thier_parents):
         neural = np.array([])
@@ -243,9 +250,14 @@ class Neuron(object):
     def normlize(self, vector, mesh):
         m = min(vector)
         M = max(vector)
-        return np.floor(mesh*((vector - m)/(M-m)))
+        if(M==m):
+            a = 0
+        else:
+            a = np.floor(mesh*((vector - m)/(M-m)))
+        return a
 
-    def set_branch_order(self): # terminal = 0, passig (non of them) = 1, branch = 2
+    def set_branch_order(self):
+         # terminal = 0, passig (non of them) = 1, branch = 2
         """
         dependency:
             nodes_list
@@ -410,20 +422,6 @@ class Neuron(object):
         n = np.power(self.diameter[I],2./3.)
         self.rall_ratio[I] = (ch1+ch2)/n
 
-    def angle_vec_matrix(self,matrix1,matrix2):
-        """
-        Takes two matrix 3*n of matrix1 and matrix2 and gives back
-        the angles for each corresponding n vectors.
-        Note: if the norm of one of the vectors is zeros the angle is np.pi
-        """
-        ang = np.zeros(matrix1.shape[1])
-        norm1 = LA.norm(matrix1, axis = 0)
-        norm2 = LA.norm(matrix2, axis = 0)
-        domin = norm1*norm2
-        (J,) = np.where(domin != 0)
-        ang[J] = np.arccos(np.maximum(np.minimum(sum(matrix1[:,J]*matrix2[:,J])/domin[J],1),-1))
-        return ang
-
     def set_values_ite(self):
         """
         set iteratively the following attributes:
@@ -444,12 +442,12 @@ class Neuron(object):
             self.location = np.append(self.location, n.xyz.reshape([3,1]), axis = 1)
             self.diameter = np.append(self.diameter, n.r)
         for n in self.nodes_list[1:]:
-            #self.frustum = np.append(self.frustum,  self._calculate_frustum(n))
-            #self.rall_ratio = np.append(self.rall_ratio, self._calculate_rall(n))
-            self.distance_from_root = np.append(self.distance_from_root, self._calculate_distance_from_root(n))
-            self.distance_from_parent = np.append(self.distance_from_parent, self._calculate_distance_from_parent(n))
-            #self.slope = np.append(self.slope, self._calculate_slope(n))
-            ang, ang1, ang2 = self._calculate_branch_angle(n)
+            #self.frustum = np.append(self.frustum,  self.calculate_frustum(n))
+            #self.rall_ratio = np.append(self.rall_ratio, self.calculate_rall(n))
+            self.distance_from_root = np.append(self.distance_from_root, self.calculate_distance_from_root(n))
+            self.distance_from_parent = np.append(self.distance_from_parent, self.calculate_distance_from_parent(n))
+            #self.slope = np.append(self.slope, self.calculate_slope(n))
+            ang, ang1, ang2 = self.calculate_branch_angle(n)
             an = np.zeros([3,1])
             an[0,0] = ang
             an[1,0] = ang1
@@ -459,10 +457,10 @@ class Neuron(object):
                 self.branch_angle = an
             else:
                 self.branch_angle = np.append(self.branch_angle, an, axis = 1)
-            glob_ang, local_ang = self._calculate_node_angles(n)
+            glob_ang, local_ang = self.calculate_node_angles(n)
             self.global_angle = np.append(self.global_angle, glob_ang)
             self.local_angle = np.append(self.local_angle, local_ang)
-            #self.neural_distance_from_soma = np.append(self.neural_distance_from_soma, self._calculate_neural_distance_from_soma(n))
+            #self.neural_distance_from_soma = np.append(self.neural_distance_from_soma, self.calculate_neural_distance_from_soma(n))
         for n in self.nodes_list[self.n_soma:]:
             self.parent_index = np.append(self.parent_index, self.get_index_for_no_soma_node(n.parent))
             if(self.branch_order[self.get_index_for_no_soma_node(n)]==2):
@@ -489,6 +487,90 @@ class Neuron(object):
         self.child_index[self.child_index == 0] = np.nan
         self.child_index[:,0:self.n_soma] = np.nan
         #self.parent_index.astype(int)
+
+    def set_loc_diam(self):
+        self.location = np.zeros([3,self.n_node])
+        self.diameter = np.zeros(self.n_node)
+        for n in range(self.n_node):
+            self.location[:,n] = self.nodes_list[n].xyz
+            self.diameter[n] = self.nodes_list[n].r
+
+    def set_connection2(self):
+        """
+        dependency:
+            self.nodes_list
+            self.n_soma
+            self.n_node
+            self.parent_index
+            self.distance_from_parent
+        """
+        connection = np.zeros([self.n_node,self.n_node]) # the connectivity matrix
+        connection[np.arange(self.n_node), self.parent_index.astype(int)] = 1
+        connection[0,0] = 0
+        connection = inv(np.eye(self.n_node) - connection)
+        connection[connection != 1] = np.nan
+        for i in range(self.n_node):
+            (J,) = np.where(~np.isnan(connection[:,i]))
+            connection[J,i] = self.distance_from_parent[i]
+        connection[:,0] = 1
+        connection[np.arange(self.n_soma),np.arange(self.n_soma)] = 1
+        self.connection = connection
+        #return connection
+
+    def set_connection(self):
+        """
+        connection is an array with size [n_node, n_node]. The element (i,j) is not np.nan if
+        node i is a decendent of node j. The value at this array is the distance of j to its parent.
+
+        dependency:
+            self.nodes_list
+            self.n_soma
+            self.parent_index
+            self.distance_from_parent
+        """
+        self.parent_index = np.array(self.parent_index, dtype = int)
+        L = self.n_node - self.n_soma
+        C = csr_matrix((np.ones(L),(range(self.n_soma,self.n_node), self.parent_index[self.n_soma:])), shape = (self.n_node,self.n_node))
+        self.connection = np.zeros([self.n_node,self.n_node]) # the connectivity matrix
+        new = 0
+        i = 0
+        old = C.sum()
+        while(new != old):
+            self.connection = C.dot(csr_matrix(self.connection)) + C
+            old = new
+            new = self.connection.sum()
+        self.connection = self.connection.toarray()
+        self.connection[range(1,self.n_node),range(1,self.n_node)] = 1
+        self.connection[:,:self.n_soma] = 0
+
+        # fill the matrix with the distance
+        for i in range(self.n_node):
+            self.connection[self.connection[:,i] != 0,i] = self.distance_from_parent[i]
+        self.connection[self.connection == 0] = np.nan
+
+    def set_sholl(self):
+        self.sholl_r = np.array([])
+        for n in self.nodes_list:
+            dis = LA.norm(self.xyz(n) - self.root.xyz,2)
+            self.sholl_r = np.append(self.sholl_r, dis)
+
+        self.sholl_r = np.sort(np.array(self.sholl_r))
+        self.sholl_n = np.zeros(self.sholl_r.shape)
+        for n in self.nodes_list:
+            if(n.parent != None):
+                par = n.parent
+                dis_par = LA.norm(self.xyz(par) - self.root.xyz,2)
+                dis_n = LA.norm(self.xyz(par) - self.root.xyz,2)
+                M = max(dis_par, dis_n)
+                m = min(dis_par, dis_n)
+                I = np.logical_and(self.sholl_r>=m, self.sholl_r<=M)
+                self.sholl_n[I] = self.sholl_n[I] + 1
+
+    def xyz(self, node):
+        return self.location[:,self.get_index_for_no_soma_node(node)]
+
+    def _r(self, node):
+        return self.diameter[self.get_index_for_no_soma_node(node)]
 
     def parent_index_for_node_subset(self, subset):
         """
@@ -587,6 +669,7 @@ class Neuron(object):
         (branch_index,) = np.where(self.branch_order[self.n_soma:]==2)
         (endpoint_index,) = np.where(self.branch_order[self.n_soma:]==0)
         selected_index = np.union1d(branch_index, endpoint_index)
+        selected_index += self.n_soma
         selected_index = np.append(range(self.n_soma), selected_index)
         parent_ind = np.array([],dtype = int)
         for i in selected_index:
@@ -610,96 +693,33 @@ class Neuron(object):
             n_list[j].add_child(n_list[i])
         return Neuron(file_format = 'only list of nodes', input_file = n_list)
 
-    def set_loc_diam(self):
-        self.location = np.zeros([3,self.n_node])
-        self.diameter = np.zeros(self.n_node)
-        for n in range(self.n_node):
-            self.location[:,n] = self.nodes_list[n].xyz
-            self.diameter[n] = self.nodes_list[n].r
+    def random_subsample(self, n):
+        np.floor((self.n_node - self.n_soma) * np.random.sample(n)) + self.n_soma
 
-    def set_connection2(self):
-        """
-        dependency:
-            self.nodes_list
-            self.n_soma
-            self.n_node
-            self.parent_index
-            self.distance_from_parent
-        """
-        connection = np.zeros([self.n_node,self.n_node]) # the connectivity matrix
-        connection[np.arange(self.n_node), self.parent_index.astype(int)] = 1
-        connection[0,0] = 0
-        connection = inv(np.eye(self.n_node) - connection)
-        connection[connection != 1] = np.nan
-        for i in range(self.n_node):
-            (J,) = np.where(~np.isnan(connection[:,i]))
-            connection[J,i] = self.distance_from_parent[i]
-        connection[:,0] = 1
-        connection[np.arange(self.n_soma),np.arange(self.n_soma)] = 1
-        self.connection = connection
-        #return connection
-
-    def set_connection(self):
-        """
-        connection is an array with size [n_node, n_node]. The element (i,j) is not np.nan if
-        node i is a decendent of node j. The value at this array is the distance of j to its parent.
-
-        dependency:
-            self.nodes_list
-            self.n_soma
-            self.parent_index
-            self.distance_from_parent
-        """
-        self.parent_index = np.array(self.parent_index, dtype = int)
-        L = self.n_node - self.n_soma
-        C = csr_matrix((np.ones(L),(range(self.n_soma,self.n_node), self.parent_index[self.n_soma:])), shape = (self.n_node,self.n_node))
-        self.connection = np.zeros([self.n_node,self.n_node]) # the connectivity matrix
-        new = 0
-        i = 0
-        old = C.sum()
-        while(new != old):
-            self.connection = C.dot(csr_matrix(self.connection)) + C
-            old = new
-            new = self.connection.sum()
-        self.connection = self.connection.toarray()
-        self.connection[range(1,self.n_node),range(1,self.n_node)] = 1
-        self.connection[:,:self.n_soma] = 0
-
-        # fill the matrix with the distance
-        for i in range(self.n_node):
-            self.connection[self.connection[:,i] != 0,i] = self.distance_from_parent[i]
-        self.connection[self.connection == 0] = np.nan
-
-    def _calculate_overall_matrix(self, node):
+    def calculate_overall_matrix(self, node):
         j = self.get_index_for_no_soma_node(node)
         k = self.get_index_for_no_soma_node(node.parent)
         (J,)  = np.where(~ np.isnan(self.connection[:,j]))
         dis = LA.norm(self.location[:,k] - self.location[:,j],2)
         self.connection[J,j] = dis
 
-    def _calculate_branch_order(self,node):
+    def calculate_branch_order(self,node):
         """
         terminal = 0, passig (non of them) = 1, branch = 2
         """
         return len(node.children)
 
-    def _calculate_frustum(self,node):
+    def calculate_frustum(self,node):
         """
         the Volume of the frustum ( the node with its parent) at each location. (nan for the nodes of soma)
         """
         r = self._r(node)
         r_par = self._r(node.parent)
-        dis = LA.norm(self._xyz(node) - self._xyz(node.parent) ,2)
+        dis = LA.norm(self.xyz(node) - self.xyz(node.parent) ,2)
         f = dis*(np.pi/3.0)*(r*r + r*r_par + r_par*r_par)
         return f
 
-    def _xyz(self, node):
-        return self.location[:,self.get_index_for_no_soma_node(node)]
-
-    def _r(self, node):
-        return self.diameter[self.get_index_for_no_soma_node(node)]
-
-    def _calculate_rall(self,node):
+    def calculate_rall(self,node):
         if(len(node.children) == 2):
             n1, n2 = node.children
             r1 = self._r(n1)
@@ -710,14 +730,15 @@ class Neuron(object):
             rall = np.nan
         return rall
 
-    def _calculate_distance_from_root(self,node):
-        return LA.norm(self._xyz(node) - self.root.xyz,2)
+    def calculate_distance_from_root(self,node):
+        return LA.norm(self.xyz(node) - self.root.xyz,2)
 
-    def _calculate_distance_from_parent(self,node):
-        return LA.norm(self._xyz(node) - self._xyz(node.parent),2)
+    def calculate_distance_from_parent(self,node):
+        return LA.norm(self.xyz(node) - self.xyz(node.parent),2)
 
-    def _calculate_slope(self,node): # the ratio of: delta(pos)/delta(radius)
-        dis = LA.norm(self._xyz(node) - self._xyz(node.parent),2)
+    def calculate_slope(self,node):
+        # the ratio of: delta(pos)/delta(radius)
+        dis = LA.norm(self.xyz(node) - self.xyz(node.parent),2)
         rad = node.r - node.parent.r
         if(dis == 0):
             val = rad
@@ -725,16 +746,17 @@ class Neuron(object):
             val = rad/dis
         return val
 
-    def _calculate_branch_angle(self,node): # the mean of the angle betwen two outward segments and previous segment at the branching (nan at other nodes)
+    def calculate_branch_angle(self,node):
+        # the mean of the angle betwen two outward segments and previous segment at the branching (nan at other nodes)
         if(len(node.children) == 2):
             n1, n2 = node.children
-            node_xyz = self._xyz(node)
-            node_par_xyz = self._xyz(node.parent)
-            node_chi_xyz1 = self._xyz(n1)
-            node_chi_xyz2 = self._xyz(n2)
-            vec  = node_par_xyz - node_xyz
-            vec1 = node_chi_xyz1 - node_xyz
-            vec2 = node_chi_xyz2 - node_xyz
+            nodexyz = self.xyz(node)
+            node_parxyz = self.xyz(node.parent)
+            node_chixyz1 = self.xyz(n1)
+            node_chixyz2 = self.xyz(n2)
+            vec  = node_parxyz - nodexyz
+            vec1 = node_chixyz1 - nodexyz
+            vec2 = node_chixyz2 - nodexyz
             ang = self.angle_vec(vec1,vec2) # the angle of two outward segments at the branching point (nan for non-branchings)
             ang1 = self.angle_vec(vec1,vec)
             ang2 = self.angle_vec(vec2,vec)
@@ -744,18 +766,17 @@ class Neuron(object):
             ang2 = np.nan
         return ang, ang1, ang2
 
-    def _calculate_node_angles(self,node): # local: the angle between next to child and its parent (nan at the branching and end points)
-                                            # global: the angle between the vector towarod the soma and vector toward its parent
+    def calculate_node_angles(self,node):
         par = node.parent
-        node_xyz = self._xyz(node)
-        node_par_xyz = self._xyz(node.parent)
-        vec1 = node_par_xyz - node_xyz
-        vec2 = self.root.xyz - node_xyz
+        nodexyz = self.xyz(node)
+        node_parxyz = self.xyz(node.parent)
+        vec1 = node_parxyz - nodexyz
+        vec2 = self.root.xyz - nodexyz
         glob_ang = self.angle_vec(vec1,vec2)
         if(node.children != None):
             if(len(node.children) ==1):
                 [child] = node.children
-                vec3 = self._xyz(child) - node_xyz
+                vec3 = self.xyz(child) - nodexyz
                 local_ang = self.angle_vec(vec1,vec3)
             else:
                 local_ang = np.nan
@@ -763,29 +784,26 @@ class Neuron(object):
             local_ang = np.nan
         return glob_ang, local_ang
 
+    # Axulary functions
+    def angle_vec_matrix(self,matrix1,matrix2):
+        """
+        Takes two matrix 3*n of matrix1 and matrix2 and gives back
+        the angles for each corresponding n vectors.
+        Note: if the norm of one of the vectors is zeros the angle is np.pi
+        """
+        ang = np.zeros(matrix1.shape[1])
+        norm1 = LA.norm(matrix1, axis = 0)
+        norm2 = LA.norm(matrix2, axis = 0)
+        domin = norm1*norm2
+        (J,) = np.where(domin != 0)
+        ang[J] = np.arccos(np.maximum(np.minimum(sum(matrix1[:,J]*matrix2[:,J])/domin[J],1),-1))
+        return ang
+
     def angle_vec(self,vec1,vec2):
         val = sum(vec1*vec2)/(LA.norm(vec1,2)*LA.norm(vec2,2))
         if(LA.norm(vec1,2)==0 or LA.norm(vec2,2) == 0):
             val = -1
         return math.acos(max(min(val,1),-1))
-
-    def set_sholl(self):
-        self.sholl_r = np.array([])
-        for n in self.nodes_list:
-            dis = LA.norm(self._xyz(n) - self.root.xyz,2)
-            self.sholl_r = np.append(self.sholl_r, dis)
-
-        self.sholl_r = np.sort(np.array(self.sholl_r))
-        self.sholl_n = np.zeros(self.sholl_r.shape)
-        for n in self.nodes_list:
-            if(n.parent != None):
-                par = n.parent
-                dis_par = LA.norm(self._xyz(par) - self.root.xyz,2)
-                dis_n = LA.norm(self._xyz(par) - self.root.xyz,2)
-                M = max(dis_par, dis_n)
-                m = min(dis_par, dis_n)
-                I = np.logical_and(self.sholl_r>=m, self.sholl_r<=M)
-                self.sholl_n[I] = self.sholl_n[I] + 1
 
     def choose_random_node_index(self):
             n = np.floor((self.n_node-self.n_soma)*np.random.random_sample()).astype(int)
@@ -824,20 +842,20 @@ class Neuron(object):
 
     def _update_attribute(self,update_list):
         for ind in update_list:
-            #self.frustum[ind] = self._calculate_frustum(self.nodes_list[ind])
-            #self.rall_ratio[ind] = self._calculate_rall(self.nodes_list[ind])
-            self.distance_from_root[ind] =  self._calculate_distance_from_root(self.nodes_list[ind])
-            self.distance_from_parent[ind] = self._calculate_distance_from_parent(self.nodes_list[ind])
-            #self.slope[ind] = self._calculate_slope(self.nodes_list[ind])
-            self.branch_order[ind] = self._calculate_branch_order(self.nodes_list[ind])
-            ang, ang1, ang2 = self._calculate_branch_angle(self.nodes_list[ind])
+            #self.frustum[ind] = self.calculate_frustum(self.nodes_list[ind])
+            #self.rall_ratio[ind] = self.calculate_rall(self.nodes_list[ind])
+            self.distance_from_root[ind] =  self.calculate_distance_from_root(self.nodes_list[ind])
+            self.distance_from_parent[ind] = self.calculate_distance_from_parent(self.nodes_list[ind])
+            #self.slope[ind] = self.calculate_slope(self.nodes_list[ind])
+            self.branch_order[ind] = self.calculate_branch_order(self.nodes_list[ind])
+            ang, ang1, ang2 = self.calculate_branch_angle(self.nodes_list[ind])
             self.branch_angle[0, ind] = ang
             self.branch_angle[1, ind] = ang1
             self.branch_angle[2, ind] = ang2
-            ang1, ang2 = self._calculate_node_angles(self.nodes_list[ind])
+            ang1, ang2 = self.calculate_node_angles(self.nodes_list[ind])
             self.global_angle[ind] = ang1
             self.local_angle[ind] = ang2
-            self._calculate_overall_matrix(self.nodes_list[ind])
+            self.calculate_overall_matrix(self.nodes_list[ind])
         #self.sholl_r = np.array([]) # the position of the jumps for sholl analysis
         #self.sholl_n = np.array([]) # the value at the jumping (the same size as self.sholl_x)
 
@@ -978,7 +996,7 @@ class Neuron(object):
         index = self.get_index_for_no_soma_node(node)
         (I,) = np.where(~np.isnan(self.connection[:,index]))
         A = self.location[:,I]
-        loc = self._xyz(node)
+        loc = self.xyz(node)
         A[0,:] = A[0,:] - loc[0]
         A[1,:] = A[1,:] - loc[1]
         A[2,:] = A[2,:] - loc[2]
@@ -1012,7 +1030,7 @@ class Neuron(object):
         par = node.parent
         (I,) = np.where(~np.isnan(self.connection[:,self.get_index_for_no_soma_node(par)]))
         A = self.location[:,I]
-        loc = self._xyz(par)
+        loc = self.xyz(par)
         A[0,:] = A[0,:] - loc[0]
         A[1,:] = A[1,:] - loc[1]
         A[2,:] = A[2,:] - loc[2]
@@ -1032,7 +1050,7 @@ class Neuron(object):
         (I,) = np.where(~np.isnan(self.connection[:,self.get_index_for_no_soma_node(node)]))
         #I = np.append(I, branch_index)
         A = self.location[:,I]
-        loc = self._xyz(node.parent)
+        loc = self.xyz(node.parent)
         A[0,:] = A[0,:] - loc[0]
         A[1,:] = A[1,:] - loc[1]
         A[2,:] = A[2,:] - loc[2]
@@ -1093,7 +1111,7 @@ class Neuron(object):
                 self.branch_angle[0,new_parent_index] = np.nan
                 self.branch_angle[1,new_parent_index] = np.nan
                 self.branch_angle[2,new_parent_index] = np.nan
-                gol, loc = self._calculate_node_angles(self.nodes_list[new_parent_index])
+                gol, loc = self.calculate_node_angles(self.nodes_list[new_parent_index])
                 self.child_index[:,new_parent_index] = np.array([self.get_index_for_no_soma_node(p.children[0]), np.nan])
                 self.local_angle[new_parent_index] = loc
             if len(p.children) == 0:
@@ -1165,6 +1183,9 @@ class Neuron(object):
         self.set_ext_red_list()
         self.set_features()
         return self.get_index_for_no_soma_node(n)
+
+    def add_extra_node(self, node):
+        print 1
 
     def slide(self, moving_node_index, no_branch_node_index):
         """
@@ -1538,9 +1559,6 @@ class Neuron(object):
             writer.flush()
         writer.close()
 
-    def __str__(self):
-        return "Neuron with ("+str(self.n_node)+" no soma nodes)"
-
     def get_random_branching_or_end_node(self):
         (b,) = np.where(self.branch_order[self.n_soma:] == 2)
         (e,) = np.where(self.branch_order[self.n_soma:] == 0)
@@ -1627,7 +1645,7 @@ class Neuron(object):
             n.r = self.diameter[i]
             i += 1
 
-    def show_features(self,size_x,size_y,bin_size):
+    def show_features(self,size_x = 15,size_y = 17 ,bin_size = 20):
         n = 6
         m = 2
 
@@ -1667,7 +1685,7 @@ class Neuron(object):
         plt.title('Distance from soma')
 
         plt.subplot(n,m,6)
-        a = self.branch_angle
+        a = self.features['branch_angle']
         plt.hist(a[~np.isnan(a)],bins = bin_size)
         #plt.xlabel('angle (radian)')
         plt.ylabel('density')
@@ -1694,6 +1712,7 @@ class Neuron(object):
         plt.ylabel('density')
         plt.title('ratio of neural to euclidian distance for segments')
         #fig, ax = plt.subplots(n,m,6)
+
         plt.subplot(n,m,10)
         ind = np.arange(4)
         width = 0.35
@@ -1701,6 +1720,8 @@ class Neuron(object):
         #plt.title('Numberical features')
         #plt.set_xticks(ind + width)
         plt.xticks(ind,('Nnodes', 'Nbranch', 'Ninitials', 'discrepancy'))
+
+
 
 class Node(object):
 
@@ -1744,8 +1765,6 @@ class Node(object):
         """
         self.__parent = parent
 
-    #parent = property(get_parent, set_parent)
-
     def get_children(self):
 
         """
@@ -1770,8 +1789,6 @@ class Node(object):
         """
         self.__children = children
 
-    #children = property(get_children, set_children)
-
     def get_radius(self):
 
         """
@@ -1784,7 +1801,7 @@ class Node(object):
     def set_radius(self, radius):
         self.r = radius
 
-    def get_xyz(self):
+    def getxyz(self):
 
         """
         Returns
@@ -1793,7 +1810,7 @@ class Node(object):
         """
         return self.xyz
 
-    def set_xyz(self, xyz):
+    def setxyz(self, xyz):
         self.xyz = xyz
 
     def set_type(self,index):
@@ -1841,6 +1858,3 @@ class Node(object):
             If the child doesn't exist, you get into problems.
         """
         self.children.remove(child)
-
-#    def __str__(self):
-#        return 'Node with: '+len(self.children)+'child/children'
