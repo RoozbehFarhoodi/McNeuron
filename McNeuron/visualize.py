@@ -294,7 +294,7 @@ def plot_2d(neuron, show_depth, line_width):
     pl.xlim((min(p[0,:]),max(p[0,:])))
     pl.ylim((min(p[1,:]),max(p[1,:])))
 
-def plot_dendograph(neuron):
+def plot_dendrograph(neuron):
     print 1
 
 def plot_2D(neuron,
