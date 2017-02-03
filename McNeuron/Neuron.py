@@ -848,7 +848,7 @@ class Neuron(object):
 
         return neuron
 
-    def subsample_main_nodes(self):
+    def regular_subsample(self):
         """
         subsamples a neuron with its main node only; i.e endpoints and branching nodes.
 
@@ -863,9 +863,9 @@ class Neuron(object):
         neuron = self.neuron_with_selected_nodes(selected_index)
         return neuron
 
-    def regular_subsample(self, distance):
+    def straigh_subsample(self, distance):
         """
-        subsamples a neuron from original neuron. It has all the main points of the original neuron,
+        Subsamples a neuron from original neuron. It has all the main points of the original neuron,
         i.e endpoints or branching nodes, are not changed and meanwhile the distance of two consecutive nodes
         of subsample neuron is around the 'distance'.
         for each segment between two consecuative main points, a few nodes from the segment will be added to the selected node;
@@ -910,7 +910,7 @@ class Neuron(object):
 
         return neuron
 
-    def regular_subsample_with_fixed_number(self, num):
+    def straight_subsample_with_fixed_number(self, num):
         """
         gives back a regular subsample neuron (regular means that the distance between consecuative nodes is approximately fixed)
         such that the number of nodes is 'num'.
@@ -928,9 +928,9 @@ class Neuron(object):
         l = sum(self.distance_from_parent)
         branch_number = len(np.where(self.branch_order[self.n_soma:] == 2))
         distance = l/(num - branch_number)
-        return self.regular_subsample(distance)
+        return self.straigh_subsample(distance)
 
-    def mesoscale_subsample(self, number):
+    def prune_subsample(self, number):
         main_point = self.subsample_main_nodes()
         Nodes = main_point.nodes_list
         rm = (main_point.n_node - number)/2.
@@ -940,7 +940,7 @@ class Neuron(object):
 
         return Neuron(file_format = 'only list of nodes', input_file = Nodes)
 
-    def regular_mesoscale_subsample(self, number):
+    def straight_prune_subsample(self, number):
         thresh = 1.
     #     n = neuron.subsample(thresh)
     #     while(len(n.nodes_list)>number):

@@ -2,7 +2,8 @@
 
 # Imports
 import numpy as np
-
+from McNeuron import Neuron
+from McNeuron import Node
 
 def get_leaves(nodes, parents):
     """
@@ -114,3 +115,13 @@ def decode_prufer(prufer, verbose=0):
 
     parents[nodes[1]] = nodes[0]
     return list(parents.astype(int))
+
+def swc_to_neuron(matrix):
+    """
+    Return the Neuron object from swc matrix.
+    """
+    return Neuron(file_format = 'Matrix of swc' , input_file = matrix)
+
+def downsample_neuron(neuron, number = 30, type = 'random'):
+    if(type == 'random'):
+        return neuron.random_subsample(number)
