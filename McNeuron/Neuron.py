@@ -140,9 +140,12 @@ class Neuron(object):
             M[:,0] = np.arange(0, len(parents_code))
             M[0,1] = 1
             M[1:,1] = 2
-            M[1:,2:5] =  location
+            M[1:,2:5] = location
             M[:,6] = parents_code
-            Neuron(file_format == 'Matrix of swc', input_file = M)
+            self.read_swc_matrix(M)
+            self.set_parent()
+            self.parent_index = self.parent_index.astype(int)
+            self.set_branch_order()
 
 
         #self.set_sholl()
