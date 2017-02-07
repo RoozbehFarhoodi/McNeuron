@@ -8,7 +8,7 @@ from __builtin__ import str
 from copy import deepcopy
 import matplotlib.pyplot as plt
 from numpy.linalg import inv
-import data_transforms
+
 #np.random.seed(0)
 
 class Neuron(object):
@@ -132,21 +132,6 @@ class Neuron(object):
             self.set_parent()
             self.parent_index = self.parent_index.astype(int)
             self.set_branch_order()
-        if(file_format == 'prufer'):
-            # the prufer code and the location are given.
-            parents_code = data_transforms.decode_prufer(list(input_file[0].argmax(axis=1)))
-            location = input_file[1]
-            M = np.zeros([len(prufer), 7])
-            M[:,0] = np.arange(0, len(parents_code))
-            M[0,1] = 1
-            M[1:,1] = 2
-            M[1:,2:5] = location
-            M[:,6] = parents_code
-            self.read_swc_matrix(M)
-            self.set_parent()
-            self.parent_index = self.parent_index.astype(int)
-            self.set_branch_order()
-
 
         #self.set_sholl()
 

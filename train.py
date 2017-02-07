@@ -1,5 +1,7 @@
 """Collection of functions to train the hierarchical model."""
 
+from __future__ import print_function
+
 import numpy as np
 
 import models
@@ -41,7 +43,8 @@ def train_model(training_data=None,
                 n_batch_per_epoch=100,
                 d_iters=100,
                 lr=0.00005,
-                weight_constraint=[-0.01, 0.01]):
+                weight_constraint=[-0.01, 0.01],
+                verbose=True):
     """
     Train the hierarchical model.
 
@@ -81,6 +84,8 @@ def train_model(training_data=None,
         learning rate for optimization
     weight_constraint: array
         upper and lower bounds of weights (to clip)
+    verbose: bool
+        print relevant progress throughout training
 
     Returns
     -------
@@ -161,6 +166,11 @@ def train_model(training_data=None,
         d_model.trainable = True
         d_model.compile(loss=models.wasserstein_loss, optimizer=optim)
 
+        if verbose:
+            print("")
+            print(20*"=")
+            print("Level #{0}".format(level))
+            print(20*"=")
         # -----------------
         # Loop over epochs
         # -----------------
@@ -168,9 +178,13 @@ def train_model(training_data=None,
             batch_counter = 1
             g_iters = 0
 
+            if verbose:
+                print("")
+                print("    Epoch #{0}".format(e))
+                print("")
+
             while batch_counter < n_batch_per_epoch:
-                list_d_loss_real = list()
-                list_d_loss_gen = list()
+                list_d_loss = list()
 
                 # ----------------------------
                 # Step 1: Train discriminator
@@ -201,20 +215,27 @@ def train_model(training_data=None,
 
                     #print X_locations_gen.shape, X_prufer_gen.shape, y_gen.shape
 
+                    X_locations = np.concatenate((X_locations_real,
+                                                 X_locations_gen), axis=0)
+
+                    X_prufer = np.concatenate((X_prufer_real,
+                                               X_prufer_gen), axis=0)
+
+                    y = np.concatenate((y_real, y_gen), axis=0)
+
                     # Update the discriminator
                     #d_model.summary()
-                    disc_loss_real = \
-                        d_model.train_on_batch([X_locations_real,
-                                                X_prufer_real],
-                                               y_real)
-                    disc_loss_gen = \
-                        d_model.train_on_batch([X_locations_gen,
-                                                X_prufer_gen],
-                                               y_gen)
-                    list_d_loss_real.append(disc_loss_real)
-                    list_d_loss_gen.append(disc_loss_gen)
+                    disc_loss = \
+                        d_model.train_on_batch([X_locations,
+                                                X_prufer],
+                                               y)
 
-                print disc_loss_real, disc_loss_gen
+                    list_d_loss.append(disc_loss)
+
+                if verbose:
+                    print("    After {0} iterations".format(d_iters))
+                    print("        Discriminator Loss \
+                        = {0}".format(disc_loss))
 
                 # ------------------------
                 # Step 2: Train generator
@@ -243,7 +264,11 @@ def train_model(training_data=None,
                                                  X_prufer_prior_gen,
                                                  noise_input],
                                                 y_real)
-                print gen_loss
+
+                if verbose:
+                    print("")
+                    print("    Generator_Loss: {0}".format(gen_loss))
+
                 # Unfreeze the discriminator
                 d_model.trainable = True
 
