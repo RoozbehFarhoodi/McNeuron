@@ -6,8 +6,12 @@ import numpy as np
 
 import models
 import batch_utils
+import data_transforms
+import McNeuron
 
 from keras.optimizers import RMSprop
+
+import matplotlib.pyplot as plt
 
 
 def clip_weights(model, weight_constraint):
@@ -34,6 +38,40 @@ def clip_weights(model, weight_constraint):
     return model
 
 
+def save_model_weights():
+    """
+    cool stuff.
+    """
+
+
+def plot_example_neuron(X_locations, X_prufer):
+    """
+    Show an example neuron.
+
+    stuff.
+    """
+    locations = np.squeeze(X_locations)
+    prufer = np.squeeze(X_prufer).argmax(axis=1)
+
+    soma = np.array([[0., 0., 0.]])
+    np.append(soma, np.squeeze(locations), axis=0)
+
+    parents = np.array(data_transforms.decode_prufer(list(prufer)))
+    parents_reordered, locations_reordered = \
+        data_transforms.reordering_prufer(parents, np.squeeze(locations))
+
+    prufer_reordered = data_transforms.encode_prufer(list(parents_reordered))
+
+    input_code = dict()
+    input_code['morphology'] = np.array(prufer_reordered)
+    input_code['geometry'] = np.squeeze(locations_reordered)
+    neuron_object = \
+        data_transforms.make_swc_from_prufer_and_locations(input_code)
+
+    McNeuron.visualize.plot_2D(neuron_object)
+    return neuron_object
+
+
 def train_model(training_data=None,
                 n_levels=3,
                 n_nodes=[10, 20, 40],
@@ -41,8 +79,9 @@ def train_model(training_data=None,
                 n_epochs=25,
                 batch_size=64,
                 n_batch_per_epoch=100,
-                d_iters=100,
-                lr=0.00005,
+                d_iters=20,
+                lr_discriminator=0.005,
+                lr_generator=0.00005,
                 weight_constraint=[-0.01, 0.01],
                 verbose=True):
     """
@@ -80,8 +119,10 @@ def train_model(training_data=None,
         number of batches per epoch
     d_iters: int
         number of iterations to train discriminator
-    lr: float
-        learning rate for optimization
+    lr_discriminator: float
+        learning rate for optimization of discriminator
+    lr_generator: float
+        learning rate for optimization of generator
     weight_constraint: array
         upper and lower bounds of weights (to clip)
     verbose: bool
@@ -145,7 +186,8 @@ def train_model(training_data=None,
     # ###############
     # Optimizers
     # ###############
-    optim = RMSprop(lr=lr)
+    optim_d = RMSprop(lr=lr_discriminator)
+    optim_g = RMSprop(lr=lr_generator)
 
     # ##############
     # Train
@@ -159,12 +201,12 @@ def train_model(training_data=None,
         d_model = disc_model[level]
         gd_model = gan_model[level]
 
-        g_model.compile(loss='mse', optimizer=optim)
-        m_model.compile(loss='mse', optimizer=optim)
+        g_model.compile(loss='mse', optimizer=optim_g)
+        m_model.compile(loss='mse', optimizer=optim_g)
         d_model.trainable = False
-        gd_model.compile(loss=models.wasserstein_loss, optimizer=optim)
+        gd_model.compile(loss=models.wasserstein_loss, optimizer=optim_g)
         d_model.trainable = True
-        d_model.compile(loss=models.wasserstein_loss, optimizer=optim)
+        d_model.compile(loss=models.wasserstein_loss, optimizer=optim_d)
 
         if verbose:
             print("")
@@ -185,7 +227,7 @@ def train_model(training_data=None,
 
             while batch_counter < n_batch_per_epoch:
                 list_d_loss = list()
-
+                list_g_loss = list()
                 # ----------------------------
                 # Step 1: Train discriminator
                 # ----------------------------
@@ -265,6 +307,7 @@ def train_model(training_data=None,
                                                  noise_input],
                                                 y_real)
 
+                list_g_loss.append(gen_loss)
                 if verbose:
                     print("")
                     print("    Generator_Loss: {0}".format(gen_loss))
@@ -272,19 +315,38 @@ def train_model(training_data=None,
                 # Unfreeze the discriminator
                 d_model.trainable = True
 
-                # Housekeeping
+                # ---------------------
+                # Step 3: Housekeeping
+                # ---------------------
                 g_iters += 1
                 batch_counter += 1
 
+                # Save model weights (few times per epoch)
+                print(batch_counter)
+                if batch_counter % 25 == 0:
+                    #save_model_weights(g_model,
+                    #                   m_model,
+                    #                   level,
+                    #                   epoch,
+                    #                   batch_counter)
+                    if verbose:
+                        print ("     Level #{0} Epoch #{1} Batch #{2}".
+                               format(level, e, batch_counter))
+
+                        neuron_object = \
+                            plot_example_neuron(X_locations_gen[0, :, :],
+                                                X_prufer_gen[0, :, :])
+                        plt.show()
+                # Display loss trace
+                if 0:
+                    plt.figure(figsize=(3, 2))
+                    plt.plot(list_d_loss)
+                    plt.show()
+
+                # Save models
                 geom_model[level] = g_model
                 morph_model[level] = m_model
                 disc_model[level] = d_model
                 gan_model[level] = gd_model
-
-            # Save images for visualization (say 2 times per epoch)
-            # TODO
-
-        # Save model weights (every few epochs)
-        # TODO
 
     return geom_model, morph_model, disc_model, gan_model

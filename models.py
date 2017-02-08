@@ -4,7 +4,7 @@
 from keras.layers.core import Dense, Reshape, Dropout
 from keras.layers import Input, merge
 from keras.models import Model
-from keras.layers.wrappers import TimeDistributed
+from keras.layers.wrappers import TimeDistributed, Bidirectional
 from keras.layers.recurrent import LSTM
 from keras import backend as K
 from keras.constraints import maxnorm
@@ -71,7 +71,7 @@ def generator(n_nodes_in=10,
               n_nodes_out=20,
               noise_dim=100,
               embedding_dim=100,
-              hidden_dim=10,
+              hidden_dim=20,
               use_context=True):
     """
     Generator network.
@@ -121,11 +121,28 @@ def generator(n_nodes_in=10,
     # -------------------
     # Synthesize output
     geometry_hidden_dim = (n_nodes_out - 1) * 3
-    geometry_hidden = Dense(geometry_hidden_dim)(all_inputs)
+    geometry_hidden1 = Dense(geometry_hidden_dim)(all_inputs)
+    geometry_hidden2 = Dense(geometry_hidden_dim)(geometry_hidden1)
 
     # Reshape
+    geometry_reshaped = \
+        Reshape(target_shape=(n_nodes_out - 1, 3))(geometry_hidden2)
+
+    # LSTM
+    geometry_lstm = \
+        Bidirectional(LSTM(input_dim=3,
+                           input_length=n_nodes_out - 1,
+                           output_dim=3,
+                           return_sequences=True))(geometry_reshaped)
+
+    # TimeDistributed
     geometry_output = \
-        Reshape(target_shape=(n_nodes_out - 1, 3))(geometry_hidden)
+        TimeDistributed(Dense(input_dim=3,
+                              output_dim=3,
+                              activation='linear'))(geometry_lstm)
+
+    #geometry_output = \
+    #    Reshape(target_shape=(n_nodes_out - 1, 3))(geometry_hidden2)
 
     # Assign inputs and outputs of the model
     if use_context is True:
@@ -142,18 +159,18 @@ def generator(n_nodes_in=10,
     # -------------------
     # Synthesize output
     morphology_hidden_dim = hidden_dim * (n_nodes_out - 2)
-    morphology_hidden = Dense(morphology_hidden_dim)(all_inputs)
-
+    morphology_hidden1 = Dense(morphology_hidden_dim)(all_inputs)
+    morphology_hidden2 = Dense(morphology_hidden_dim)(morphology_hidden1)
     # Reshape
     morphology_reshaped = \
-        Reshape(target_shape=(n_nodes_out - 2, hidden_dim))(morphology_hidden)
+        Reshape(target_shape=(n_nodes_out - 2, hidden_dim))(morphology_hidden2)
 
     # LSTM
     morphology_lstm = \
-        LSTM(input_dim=hidden_dim,
-             input_length=n_nodes_out - 2,
-             output_dim=hidden_dim,
-             return_sequences=True)(morphology_reshaped)
+        Bidirectional(LSTM(input_dim=hidden_dim,
+                           input_length=n_nodes_out - 2,
+                           output_dim=hidden_dim,
+                           return_sequences=True))(morphology_reshaped)
 
     # TimeDistributed
     morphology_output = \
