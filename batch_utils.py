@@ -49,13 +49,16 @@ def get_batch(training_data, batch_size, batch_counter, n_nodes):
     #X_prufer_real = np.swapaxes(X_prufer_real, 1, 2)
 
     X_locations_real = \
-        training_data['geometry']['n'+str(20)][select, :, :]
+        training_data['geometry']['n'+str(n_nodes)][select, :, :]
 
     return X_locations_real, X_prufer_real
 
 
 def gen_batch(geom_model,
+              cond_geom_model,
               morph_model,
+              cond_morph_model,
+              conditioning_rule='mgd',
               batch_size=64,
               n_nodes=20,
               level=1,
@@ -65,6 +68,17 @@ def gen_batch(geom_model,
 
     Parameters
     ----------
+    geom_model: list of keras objects
+        geometry generator for each level in the hierarchy
+    cond_geom_model: list of keras objects
+        geometry generator for each level in the hierarchy
+    morph_model: list of keras objects
+        morphology generator for each level in the hierarchy
+    cond_morph_model: list of keras objects
+        morphology generator for each level in the hierarchy
+    conditioning_rule: str
+        'mgd': P_w(disc_loss|g,m) P(g|m) P(m)
+        'gmd': P_w(disc_loss|g,m) P(m|g) P(g)
     batch_size: int
         batch size
     n_nodes: list of ints
@@ -73,10 +87,6 @@ def gen_batch(geom_model,
         indicator of level in the hierarchy
     input_dim: int
         dimensionality of noise input
-    geom_model: list of keras objects
-        geometry generator for each level in the hierarchy
-    morph_model: list of keras objects
-        morphology generator for each level in the hierarchy
 
     Returns
     -------
@@ -94,8 +104,15 @@ def gen_batch(geom_model,
 
         if l == 0:
             # Generate geometry and morphology
-            locations = geom_model[l].predict(noise_code)
-            prufer = morph_model[l].predict(noise_code)
+            if conditioning_rule == 'mgd':
+                prufer = morph_model[l].predict(noise_code)
+                locations = cond_geom_model[l].predict([noise_code,
+                                                        prufer])
+            elif conditioning_rule == 'gmd':
+                locations = geom_model[l].predict(noise_code)
+                prufer = cond_morph_model[l].predict([noise_code,
+                                                      locations])
+
         else:
             # Assign previous level's geometry and morphology
             # as priors for the next level
@@ -104,13 +121,25 @@ def gen_batch(geom_model,
 
             # Generate geometry and morphology conditioned on
             # the previous level
-            locations = \
-                geom_model[l].predict([locations_prior,
-                                       prufer_prior,
-                                       noise_code])
-            prufer = \
-                morph_model[l].predict([locations_prior,
-                                        prufer_prior,
-                                        noise_code])
+            if conditioning_rule == 'mgd':
+                prufer = \
+                    morph_model[l].predict([locations_prior,
+                                            prufer_prior,
+                                            noise_code])
+                locations = \
+                    cond_geom_model[l].predict([locations_prior,
+                                                prufer_prior,
+                                                noise_code,
+                                                prufer])
+            elif conditioning_rule == 'gmd':
+                locations = \
+                    geom_model[l].predict([locations_prior,
+                                           prufer_prior,
+                                           noise_code])
+                prufer = \
+                    cond_morph_model[l].predict([locations_prior,
+                                                 prufer_prior,
+                                                 noise_code,
+                                                 locations])
 
     return locations, prufer
