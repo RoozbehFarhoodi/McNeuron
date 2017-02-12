@@ -37,18 +37,27 @@ def embedder(n_nodes=10, hidden_dim=20, embedding_dim=100):
 
     # Get morphology to the same length as geometry
     morphology_embedding_lstm0 = \
-        Bidirectional(LSTM(input_dim=hidden_dim,
+        Bidirectional(LSTM(input_dim=n_nodes,
                            input_length=n_nodes - 2,
                            output_dim=hidden_dim,
-                           return_sequences=False))(morphology_input)
-    morphology_embedding_repeat = \
-        RepeatVector(n_nodes - 1)(morphology_embedding_lstm0)
+                           return_sequences=True),
+                      merge_mode='sum')(morphology_input)
+    morphology_embedding_reshaped = \
+        Reshape(target_shape=
+                (1, (n_nodes - 2) * hidden_dim))(morphology_embedding_lstm0)
+    morphology_embedding_dense = \
+        Dense(input_dim=(n_nodes - 2) * hidden_dim,
+              output_dim=(n_nodes - 1) * n_nodes)(morphology_embedding_reshaped)
+    morphology_embedding_reshaped = \
+        Reshape(target_shape=
+                (n_nodes - 1, n_nodes))(morphology_embedding_dense)
     morphology_code = \
-        Bidirectional(LSTM(input_dim=hidden_dim,
+        Bidirectional(LSTM(input_dim=n_nodes,
                            input_length=n_nodes - 1,
-                           output_dim=hidden_dim,
-                           return_sequences=False),
-                      merge_mode='sum')(morphology_embedding_repeat)
+                           output_dim=n_nodes,
+                           activation='softmax',
+                           return_sequences=True),
+                      merge_mode='sum')(morphology_embedding_reshaped)
 
     # Merge
     merged_layer = merge([geometry_input,
@@ -56,22 +65,23 @@ def embedder(n_nodes=10, hidden_dim=20, embedding_dim=100):
 
     # LSTM
     embedding_lstm1 = \
-        Bidirectional(LSTM(input_dim=(hidden_dim + 3),
+        Bidirectional(LSTM(input_dim=(n_nodes + 3),
                            input_length=n_nodes - 1,
                            output_dim=hidden_dim,
-                           return_sequences=True))(merged_layer)
+                           return_sequences=True),
+                      merge_mode='sum')(merged_layer)
 
     embedding_reshaped = \
         Reshape(target_shape=
-                (1, (n_nodes - 1) * (hidden_dim + 3)))(embedding_lstm1)
+                (1, (n_nodes - 1) * hidden_dim))(embedding_lstm1)
 
-    embedding = Dense(input_dim=(n_nodes - 1) * (hidden_dim + 3),
+    embedding = Dense(input_dim=(n_nodes - 1) * hidden_dim,
                       output_dim=embedding_dim,
                       name='embedding')(embedding_reshaped)
     return geometry_input, morphology_input, embedding
 
 
-def geometry_embedder(n_nodes=10, embedding_dim=100):
+def geometry_embedder(n_nodes=10, hidden_dim=20, embedding_dim=100):
     """
     Embedding of geometric coordinates of nodes.
 
@@ -79,6 +89,8 @@ def geometry_embedder(n_nodes=10, embedding_dim=100):
     ----------
     n_nodes: int
         number of nodes
+    hidden_dim: int
+        number of hidden dimensions for LSTM
     embedding_dim: int
         embedding_dimension
 
@@ -90,15 +102,25 @@ def geometry_embedder(n_nodes=10, embedding_dim=100):
         embedding layer
     """
     geometry_input = Input(shape=(n_nodes - 1, 3))
+
+    # LSTM
+    geometry_embedding_lstm1 = \
+        Bidirectional(LSTM(input_dim=3,
+                           input_length=n_nodes - 1,
+                           output_dim=hidden_dim,
+                           return_sequences=True),
+                      merge_mode='sum')(geometry_input)
+
     geometry_reshaped = \
-        Reshape(target_shape=(1, (n_nodes - 1) * 3))(geometry_input)
-    geometry_embedding = Dense(input_dim=(n_nodes - 1) * 3,
+        Reshape(target_shape=
+                (1, (n_nodes - 1) * hidden_dim))(geometry_embedding_lstm1)
+    geometry_embedding = Dense(input_dim=(n_nodes - 1) * hidden_dim,
                                output_dim=embedding_dim,
                                name='geometry_embedding')(geometry_reshaped)
     return geometry_input, geometry_embedding
 
 
-def morphology_embedder(n_nodes=10, embedding_dim=100):
+def morphology_embedder(n_nodes=10, hidden_dim=20, embedding_dim=100):
     """
     Embedding of tree morphology (softmax Prufer code).
 
@@ -106,6 +128,8 @@ def morphology_embedder(n_nodes=10, embedding_dim=100):
     ----------
     n_nodes: int
         number of nodes
+    hidden_dim: int
+        number of hidden dimeisions for LSTM
     embedding_dim: int
         embedding_dimension
 
@@ -117,10 +141,36 @@ def morphology_embedder(n_nodes=10, embedding_dim=100):
         embedding layer
     """
     morphology_input = Input(shape=(n_nodes - 2, n_nodes))
+
+    # LSTM
+    morphology_embedding_lstm0 = \
+        Bidirectional(LSTM(input_dim=n_nodes,
+                           input_length=n_nodes - 2,
+                           output_dim=hidden_dim,
+                           return_sequences=True),
+                      merge_mode='sum')(morphology_input)
+    morphology_embedding_reshaped = \
+        Reshape(target_shape=
+                (1, (n_nodes - 2) * hidden_dim))(morphology_embedding_lstm0)
+    morphology_embedding_dense = \
+        Dense(input_dim=(n_nodes - 2) * hidden_dim,
+              output_dim=(n_nodes - 1) * n_nodes)(morphology_embedding_reshaped)
+    morphology_embedding_reshaped = \
+        Reshape(target_shape=
+                (n_nodes - 1, n_nodes))(morphology_embedding_dense)
+    morphology_embedding_lstm1 = \
+        Bidirectional(LSTM(input_dim=n_nodes,
+                           input_length=n_nodes - 1,
+                           output_dim=n_nodes,
+                           activation='softmax',
+                           return_sequences=True),
+                      merge_mode='sum')(morphology_embedding_reshaped)
+
     morphology_reshaped = \
-        Reshape(target_shape=(1, n_nodes * (n_nodes - 2)))(morphology_input)
+        Reshape(target_shape=
+                (1, n_nodes * (n_nodes - 1)))(morphology_embedding_lstm1)
     morphology_embedding = \
-        Dense(input_dim=(n_nodes - 2) * n_nodes,
+        Dense(input_dim=(n_nodes - 1) * n_nodes,
               output_dim=embedding_dim,
               name='morphology_embedding')(morphology_reshaped)
     return morphology_input, morphology_embedding
@@ -162,12 +212,12 @@ def generator(n_nodes_in=10,
     """
     # Embed contextual information from previous levels
     if use_context is True:
-        prior_geometry_input, prior_geometry_embedding = \
-            geometry_embedder(n_nodes=n_nodes_in,
-                              embedding_dim=embedding_dim)
-        prior_morphology_input, prior_morphology_embedding = \
-            morphology_embedder(n_nodes=n_nodes_in,
-                                embedding_dim=embedding_dim)
+        prior_geometry_input, \
+            prior_morphology_input, \
+            prior_embedding = \
+            embedder(n_nodes=n_nodes_in,
+                     hidden_dim=hidden_dim,
+                     embedding_dim=embedding_dim)
 
     # Generate noise input
     noise_input = Input(shape=(1, noise_dim), name='noise_input')
@@ -175,15 +225,17 @@ def generator(n_nodes_in=10,
     # Embed conditional information from current level
     geometry_input, geometry_embedding = \
         geometry_embedder(n_nodes=n_nodes_out,
+                          hidden_dim=hidden_dim,
                           embedding_dim=embedding_dim)
+
     morphology_input, morphology_embedding = \
         morphology_embedder(n_nodes=n_nodes_out,
+                            hidden_dim=hidden_dim,
                             embedding_dim=embedding_dim)
 
-    # Concatenate context and noise inputs
+    # Concatenate prior context and noise inputs
     if use_context is True:
-        all_common_inputs = merge([geometry_embedding,
-                                   morphology_embedding,
+        all_common_inputs = merge([prior_embedding,
                                    noise_input], mode='concat')
     else:
         all_common_inputs = noise_input
@@ -397,25 +449,16 @@ def discriminator(n_nodes_in=10,
     discriminator_model: keras model object
         model of discriminator
     """
-    # Embed geometry
-    geometry_input, geometry_embedding = \
-        geometry_embedder(n_nodes=n_nodes_in,
-                          embedding_dim=embedding_dim)
-
-    # Embed morphology
-    morphology_input, morphology_embedding = \
-        morphology_embedder(n_nodes=n_nodes_in,
-                            embedding_dim=embedding_dim)
-
-    # Concatenate embeddings
-    all_inputs = merge([geometry_embedding, morphology_embedding],
-                       mode='concat')
+    # Joint embedding of geometry and morphology
+    geometry_input, morphology_input, embedding = \
+        embedder(n_nodes=n_nodes_in,
+                 embedding_dim=embedding_dim)
 
     # --------------------
     # Discriminator model
     # -------------------=
     discriminator_hidden1 = \
-        Dense(hidden_dim)(all_inputs)
+        Dense(hidden_dim)(embedding)
     discriminator_hidden2 = \
         Dense(hidden_dim)(discriminator_hidden1)
     discriminator_output = \
@@ -537,7 +580,9 @@ def discriminator_on_generators(geometry_model,
                 conditional_morphology_model([noise_input,
                                               geometry_output])
 
+    # ---------------------
     # Discriminator output
+    # ---------------------
     discriminator_output = \
         discriminator_model([geometry_output,
                              morphology_output])
