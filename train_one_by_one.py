@@ -4,7 +4,7 @@ from __future__ import print_function
 
 import numpy as np
 
-import models_joint_embedding as models
+import models_generate_parents as models
 import batch_utils
 import data_transforms
 import McNeuron
@@ -42,6 +42,28 @@ def save_model_weights():
     """
     cool stuff.
     """
+
+
+def plot_example_neuron_v2(X_locations, X_parent):
+    """
+    Show an example neuron.
+
+    stuff.
+    """
+    locations = np.squeeze(X_locations)
+    parent = np.squeeze(X_parent).argmax(axis=1) + 1
+
+    M = np.zeros([parent.shape[0] + 1, 7])
+    M[:, 0] = np.arange(1, parent.shape[0] + 2)
+    M[0, 1] = 1
+    M[1:, 1] = 2
+    M[1:, 2:5] = locations
+    M[1:, 6] = parent
+    M[0, 6] = -1
+    neuron_object = McNeuron.Neuron(file_format='Matrix of swc', input_file=M)
+
+    McNeuron.visualize.plot_2D(neuron_object)
+    return neuron_object
 
 
 def plot_example_neuron(X_locations, X_prufer):
@@ -84,6 +106,7 @@ def train_model(training_data=None,
                 lr_generator=0.00005,
                 weight_constraint=[-0.01, 0.01],
                 rule='mgd',
+                train_one_by_one=False,
                 verbose=True):
     """
     Train the hierarchical model.
@@ -164,7 +187,8 @@ def train_model(training_data=None,
             g_model, cg_model, m_model, cm_model = \
                 models.generator(use_context=False,
                                  n_nodes_in=n_nodes[level-1],
-                                 n_nodes_out=n_nodes[level])
+                                 n_nodes_out=n_nodes[level],
+                                 batch_size=batch_size)
             stacked_model = \
                 models.discriminator_on_generators(g_model,
                                                    cg_model,
@@ -313,20 +337,21 @@ def train_model(training_data=None,
                 # Freeze the discriminator
                 d_model.trainable = False
 
-                # For odd iterations
-                if batch_counter % 2 == 1:
-                    # Freeze the conditioned generator
-                    if rule == 'mgd':
-                        cg_model.trainable = False
-                    elif rule == 'gmd':
-                        cm_model.trainable = False
-                # For even iterations
-                else:
-                    # Freeze the unconditioned generator
-                    if rule == 'mgd':
-                        g_model.trainable = False
-                    elif rule == 'gmd':
-                        m_model.trainable = False
+                if train_one_by_one is True:
+                    # For odd iterations
+                    if batch_counter % 2 == 1:
+                        # Freeze the conditioned generator
+                        if rule == 'mgd':
+                            cg_model.trainable = False
+                        elif rule == 'gmd':
+                            cm_model.trainable = False
+                    # For even iterations
+                    else:
+                        # Freeze the unconditioned generator
+                        if rule == 'mgd':
+                            g_model.trainable = False
+                        elif rule == 'gmd':
+                            m_model.trainable = False
 
                 if level > 0:
                     X_locations_prior_gen, X_prufer_prior_gen = \
@@ -395,11 +420,11 @@ def train_model(training_data=None,
                                format(level, e, batch_counter))
 
                         neuron_object = \
-                            plot_example_neuron(X_locations_gen[0, :, :],
-                                                X_prufer_gen[0, :, :])
+                            plot_example_neuron_v2(X_locations_gen[0, :, :],
+                                                   X_prufer_gen[0, :, :])
                         plt.show()
                 # Display loss trace
-                if 0:
+                if verbose:
                     plt.figure(figsize=(3, 2))
                     plt.plot(list_d_loss)
                     plt.show()

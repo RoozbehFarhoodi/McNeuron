@@ -42,10 +42,10 @@ def get_batch(training_data, batch_size, batch_counter, n_nodes):
     select = range((batch_counter - 1) * batch_size,
                    batch_counter * batch_size)
     tmp = np.reshape(training_data['morphology']['n'+str(n_nodes)][select, :],
-                     [1, (n_nodes - 2) * batch_size])
+                     [1, (n_nodes - 1) * batch_size])
 
     X_prufer_real = np.reshape(enc.fit_transform(tmp).toarray(),
-                               [batch_size, n_nodes - 2, n_nodes])
+                               [batch_size, n_nodes - 1, n_nodes])
     #X_prufer_real = np.swapaxes(X_prufer_real, 1, 2)
 
     X_locations_real = \
