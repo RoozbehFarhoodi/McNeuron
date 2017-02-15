@@ -4,7 +4,7 @@
 from keras.layers.core import Dense, Reshape, RepeatVector, Lambda
 from keras.layers import Input, merge
 from keras.models import Model
-from keras.layers.wrappers import TimeDistributed, Bidirectional
+from keras.layers.wrappers import TimeDistributed
 from keras.layers.recurrent import LSTM
 from keras import backend as K
 
@@ -41,11 +41,10 @@ def embedder(n_nodes=10, hidden_dim=20, embedding_dim=100):
 
     # LSTM
     embedding_lstm1 = \
-        Bidirectional(LSTM(input_dim=(n_nodes + 3),
-                           input_length=n_nodes - 1,
-                           output_dim=hidden_dim,
-                           return_sequences=True),
-                      merge_mode='sum')(merged_layer)
+        LSTM(input_dim=(n_nodes + 3),
+             input_length=n_nodes - 1,
+             output_dim=hidden_dim,
+             return_sequences=True)(merged_layer)
 
     embedding_reshaped = \
         Reshape(target_shape=
@@ -81,11 +80,10 @@ def geometry_embedder(n_nodes=10, hidden_dim=20, embedding_dim=100):
 
     # LSTM
     geometry_embedding_lstm1 = \
-        Bidirectional(LSTM(input_dim=3,
-                           input_length=n_nodes - 1,
-                           output_dim=hidden_dim,
-                           return_sequences=True),
-                      merge_mode='sum')(geometry_input)
+        LSTM(input_dim=3,
+             input_length=n_nodes - 1,
+             output_dim=hidden_dim,
+             return_sequences=True)(geometry_input)
 
     geometry_reshaped = \
         Reshape(target_shape=
@@ -120,11 +118,10 @@ def morphology_embedder(n_nodes=10, hidden_dim=20, embedding_dim=100):
 
     # LSTM
     morphology_embedding_lstm1 = \
-        Bidirectional(LSTM(input_dim=n_nodes,
-                           input_length=n_nodes - 1,
-                           output_dim=hidden_dim,
-                           return_sequences=True),
-                      merge_mode='sum')(morphology_input)
+        LSTM(input_dim=n_nodes,
+             input_length=n_nodes - 1,
+             output_dim=hidden_dim,
+             return_sequences=True)(morphology_input)
 
     morphology_embedding_reshaped = \
         Reshape(target_shape=
@@ -158,13 +155,29 @@ def masked_softmax(input_layer, n_nodes, batch_size):
     mask_lower = K.theano.tensor.tril(K.ones((n_nodes - 1, n_nodes)))
     mask_upper = \
         K.theano.tensor.triu(-100. * K.ones((n_nodes - 1, n_nodes)), 1)
-    mask_layer = mask_lower * input_layer + mask_upper
+    mask_layer = mask_lower * K.log(input_layer) + mask_upper
     mask_layer = \
         K.reshape(mask_layer, (batch_size * (n_nodes - 1), n_nodes))
     softmax_layer = K.softmax(mask_layer)
     output_layer = K.reshape(softmax_layer, (batch_size, n_nodes - 1, n_nodes))
     return output_layer
     # return input_layer
+
+
+def full_matrix(adjacency, n_nodes):
+    """
+    Returning the full matrix of adjacency.
+
+    Parameters
+    ----------
+    adjacency: keras layer object
+        (n , n) matrix
+    Returns
+    -------
+    keras layer object
+        (n , n) matrix
+    """
+    return K.theano.tensor.nlinalg.matrix_inverse(K.eye(n_nodes) - adjacency)
 
 
 # Masked softmax Lambda layer
@@ -174,26 +187,41 @@ def masked_softmax_full(input_layer, n_nodes, batch_size):
 
     Each row must sum up to one. We apply a lower triangular mask of ones
     and then add an upper triangular mask of a large negative number.
+    After that we return the full adjacency matrix.
 
     Parameters
     ----------
     input_layer: keras layer object
         (n x 1, n) matrix
-
     Returns
     -------
     output_layer: keras layer object
         (n x 1, n) matrix
     """
     mask_lower = K.theano.tensor.tril(K.ones((n_nodes - 1, n_nodes)))
+
     mask_upper = \
         K.theano.tensor.triu(-100. * K.ones((n_nodes - 1, n_nodes)), 1)
-    mask_layer = mask_lower * input_layer + mask_upper
+
+    mask_layer = mask_lower * K.log(input_layer) + mask_upper
+
     mask_layer = \
         K.reshape(mask_layer, (batch_size * (n_nodes - 1), n_nodes))
+
     softmax_layer = K.softmax(mask_layer)
-    output_layer = K.reshape(softmax_layer, (batch_size, n_nodes - 1, n_nodes))
-    return output_layer
+
+    mask_layer = \
+        K.reshape(softmax_layer, (batch_size, n_nodes - 1, n_nodes))
+
+    mask_layer = \
+        K.concatenate([K.zeros(shape=[batch_size, 1, n_nodes]), mask_layer],
+                      axis=1)
+
+    result, updates = \
+        K.theano.scan(fn = lambda n: full_matrix(mask_layer[n, : , :], n_nodes),
+                      sequences=K.arange(batch_size))
+
+    return result[:, 1:, :]
     # return input_layer
 
 
@@ -277,15 +305,15 @@ def generator(n_nodes_in=10,
 
     # LSTM
     geometry_lstm1 = \
-        Bidirectional(LSTM(input_dim=3,
-                           input_length=n_nodes_out - 1,
-                           output_dim=3,
-                           return_sequences=True))(geometry_reshaped)
+        LSTM(input_dim=3,
+             input_length=n_nodes_out - 1,
+             output_dim=3,
+             return_sequences=True)(geometry_reshaped)
     geometry_lstm2 = \
-        Bidirectional(LSTM(input_dim=3,
-                           input_length=n_nodes_out - 1,
-                           output_dim=3,
-                           return_sequences=True))(geometry_lstm1)
+        LSTM(input_dim=3,
+             input_length=n_nodes_out - 1,
+             output_dim=3,
+             return_sequences=True)(geometry_lstm1)
     # TimeDistributed
     geometry_output = \
         TimeDistributed(Dense(input_dim=3,
@@ -321,15 +349,15 @@ def generator(n_nodes_in=10,
 
     # LSTM
     geometry_lstm1 = \
-        Bidirectional(LSTM(input_dim=3,
-                           input_length=n_nodes_out - 1,
-                           output_dim=3,
-                           return_sequences=True))(geometry_reshaped)
+        LSTM(input_dim=3,
+             input_length=n_nodes_out - 1,
+             output_dim=3,
+             return_sequences=True)(geometry_reshaped)
     geometry_lstm2 = \
-        Bidirectional(LSTM(input_dim=3,
-                           input_length=n_nodes_out - 1,
-                           output_dim=3,
-                           return_sequences=True))(geometry_lstm1)
+        LSTM(input_dim=3,
+             input_length=n_nodes_out - 1,
+             output_dim=3,
+             return_sequences=True)(geometry_lstm1)
     # TimeDistributed
     geometry_output = \
         TimeDistributed(Dense(input_dim=3,
@@ -365,26 +393,41 @@ def generator(n_nodes_in=10,
 
     # LSTM
     morphology_lstm1 = \
-        Bidirectional(LSTM(input_dim=hidden_dim,
-                           input_length=n_nodes_out - 1,
-                           output_dim=hidden_dim,
-                           return_sequences=True))(morphology_reshaped)
+        LSTM(input_dim=hidden_dim,
+             input_length=n_nodes_out - 1,
+             output_dim=hidden_dim,
+             return_sequences=True)(morphology_reshaped)
     morphology_lstm2 = \
-        Bidirectional(LSTM(input_dim=hidden_dim,
-                           input_length=n_nodes_out - 1,
-                           output_dim=hidden_dim,
-                           return_sequences=True))(morphology_lstm1)
+        LSTM(input_dim=hidden_dim,
+             input_length=n_nodes_out - 1,
+             output_dim=hidden_dim,
+             return_sequences=True)(morphology_lstm1)
     # TimeDistributed
     morphology_dense = \
         TimeDistributed(Dense(input_dim=hidden_dim,
                               output_dim=n_nodes_out,
-                              activation='linear'))(morphology_lstm2)
+                              activation='sigmoid'))(morphology_lstm2)
 
     lambda_args = {'n_nodes': n_nodes_out, 'batch_size': batch_size}
     morphology_output = \
-        Lambda(masked_softmax,
+        Lambda(masked_softmax_full,
                output_shape=(n_nodes_out - 1, n_nodes_out),
                arguments=lambda_args)(morphology_dense)
+
+    # # Dense
+    # morphology_hidden_dim = n_nodes_out * (n_nodes_out - 1)
+    # morphology_hidden1 = Dense(morphology_hidden_dim,
+    #                            activation='sigmoid')(all_common_inputs)
+    #
+    # # Reshape
+    # morphology_reshaped = \
+    #     Reshape(target_shape=(n_nodes_out - 1, n_nodes_out))(morphology_hidden1)
+    #
+    # lambda_args = {'n_nodes': n_nodes_out, 'batch_size': batch_size}
+    # morphology_output = \
+    #     Lambda(masked_softmax_full,
+    #            output_shape=(n_nodes_out - 1, n_nodes_out),
+    #            arguments=lambda_args)(morphology_reshaped)
 
     # Assign inputs and outputs of the model
     if use_context is True:
@@ -417,27 +460,42 @@ def generator(n_nodes_in=10,
 
     # LSTM
     morphology_lstm1 = \
-        Bidirectional(LSTM(input_dim=hidden_dim,
-                           input_length=n_nodes_out - 1,
-                           output_dim=hidden_dim,
-                           return_sequences=True))(morphology_reshaped)
+        LSTM(input_dim=hidden_dim,
+             input_length=n_nodes_out - 1,
+             output_dim=hidden_dim,
+             return_sequences=True)(morphology_reshaped)
     morphology_lstm2 = \
-        Bidirectional(LSTM(input_dim=hidden_dim,
-                           input_length=n_nodes_out - 1,
-                           output_dim=hidden_dim,
-                           return_sequences=True))(morphology_lstm1)
+        LSTM(input_dim=hidden_dim,
+             input_length=n_nodes_out - 1,
+             output_dim=hidden_dim,
+             return_sequences=True)(morphology_lstm1)
 
     # TimeDistributed
     morphology_dense = \
         TimeDistributed(Dense(input_dim=hidden_dim,
                               output_dim=n_nodes_out,
-                              activation='softmax'))(morphology_lstm2)
+                              activation='sigmoid'))(morphology_lstm2)
 
     lambda_args = {'n_nodes': n_nodes_out, 'batch_size': batch_size}
     morphology_output = \
-        Lambda(masked_softmax,
+        Lambda(masked_softmax_full,
                output_shape=(n_nodes_out - 1, n_nodes_out),
                arguments=lambda_args)(morphology_dense)
+
+    # # Dense
+    # morphology_hidden_dim = n_nodes_out * (n_nodes_out - 1)
+    # morphology_hidden1 = Dense(morphology_hidden_dim,
+    #                            activation='softmax')(all_morphology_inputs)
+    #
+    # # Reshape
+    # morphology_reshaped = \
+    #     Reshape(target_shape=(n_nodes_out - 1, n_nodes_out))(morphology_hidden1)
+    #
+    # lambda_args = {'n_nodes': n_nodes_out, 'batch_size': batch_size}
+    # morphology_output = \
+    #     Lambda(masked_softmax_full,
+    #            output_shape=(n_nodes_out - 1, n_nodes_out),
+    #            arguments=lambda_args)(morphology_reshaped)
 
     # Assign inputs and outputs of the model
     if use_context is True:
@@ -467,7 +525,8 @@ def generator(n_nodes_in=10,
 # Discriminator
 def discriminator(n_nodes_in=10,
                   embedding_dim=100,
-                  hidden_dim=50):
+                  hidden_dim=50,
+                  train_loss='wasserstein_loss'):
     """
     Discriminator network.
 
@@ -497,13 +556,18 @@ def discriminator(n_nodes_in=10,
         Dense(hidden_dim)(embedding)
     discriminator_hidden2 = \
         Dense(hidden_dim)(discriminator_hidden1)
-    discriminator_output = \
-        Dense(1, activation='linear')(discriminator_hidden2)
+    if train_loss == 'wasserstein_loss':
+        discriminator_output = \
+            Dense(1, activation='linear')(discriminator_hidden2)
+    else:
+        discriminator_output = \
+            Dense(1, activation='sigmoid')(discriminator_hidden2)
 
     discriminator_model = Model(input=[geometry_input,
                                        morphology_input],
                                 output=[discriminator_output])
 
+    discriminator_model.summary()
     return discriminator_model
 
 

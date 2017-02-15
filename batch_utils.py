@@ -4,6 +4,30 @@ import numpy as np
 from sklearn.preprocessing import OneHotEncoder
 
 
+def invert_full_matrix_np(full_adjacency):
+    full_adjacency = np.squeeze(full_adjacency)
+    n_nodes = full_adjacency.shape[1]
+    full_adjacency = np.append(np.zeros([1, n_nodes]), full_adjacency, axis=0)
+    full_adjacency[0, 0] = 1
+    adjacency = np.eye(n_nodes) - np.linalg.inv(full_adjacency)
+    return adjacency[1:, :]
+
+
+def full_matrix_np(adjacency, n_nodes):
+    return np.linalg.inv(np.eye(n_nodes) - adjacency)
+
+
+def batch_full_np(input_data):
+    batch_size = input_data.shape[0]
+    n_nodes = input_data.shape[2]
+    output_data = np.append(np.zeros([batch_size, 1, n_nodes]),
+                            input_data, axis=1)
+    for i in range(batch_size):
+        output_data[i, :, :] = \
+            full_matrix_np(np.squeeze(output_data[i, :, :]), n_nodes)
+    return output_data[:, 1:, :]
+
+
 def get_batch(training_data, batch_size, batch_counter, n_nodes):
     """
     Make a batch of morphological and geometrical data.
@@ -46,6 +70,9 @@ def get_batch(training_data, batch_size, batch_counter, n_nodes):
 
     X_prufer_real = np.reshape(enc.fit_transform(tmp).toarray(),
                                [batch_size, n_nodes - 1, n_nodes])
+
+    X_prufer_real = batch_full_np(X_prufer_real)
+
     #X_prufer_real = np.swapaxes(X_prufer_real, 1, 2)
 
     X_locations_real = \

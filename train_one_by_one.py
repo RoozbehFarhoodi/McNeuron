@@ -30,11 +30,12 @@ def clip_weights(model, weight_constraint):
         model with clipped weights
     """
     for l in model.layers:
-        weights = l.get_weights()
-        weights = \
-            [np.clip(w, weight_constraint[0],
-                     weight_constraint[1]) for w in weights]
-        l.set_weights(weights)
+        if 'dense' in l.name:
+            weights = l.get_weights()
+            weights = \
+                [np.clip(w, weight_constraint[0],
+                         weight_constraint[1]) for w in weights]
+            l.set_weights(weights)
     return model
 
 
@@ -107,6 +108,7 @@ def train_model(training_data=None,
                 weight_constraint=[-0.01, 0.01],
                 rule='mgd',
                 train_one_by_one=False,
+                train_loss='wasserstein_loss',
                 verbose=True):
     """
     Train the hierarchical model.
@@ -179,7 +181,8 @@ def train_model(training_data=None,
 
     for level in range(n_levels):
         # Discriminator
-        d_model = models.discriminator(n_nodes_in=n_nodes[level])
+        d_model = models.discriminator(n_nodes_in=n_nodes[level],
+                                       train_loss=train_loss)
 
         # Generators and GANs
         # If we are in the first level, no context
@@ -252,10 +255,22 @@ def train_model(training_data=None,
         cm_model.compile(loss='mse', optimizer=optim_g)
 
         d_model.trainable = False
-        stacked_model.compile(loss=models.wasserstein_loss, optimizer=optim_g)
+
+        if train_loss == 'wasserstein_loss':
+            stacked_model.compile(loss=models.wasserstein_loss,
+                                  optimizer=optim_g)
+        else:
+            stacked_model.compile(loss='binary_crossentropy',
+                                  optimizer=optim_g)
 
         d_model.trainable = True
-        d_model.compile(loss=models.wasserstein_loss, optimizer=optim_d)
+
+        if train_loss == 'wasserstein_loss':
+            d_model.compile(loss=models.wasserstein_loss,
+                            optimizer=optim_d)
+        else:
+            d_model.compile(loss='binary_crossentropy',
+                            optimizer=optim_d)
 
         if verbose:
             print("")
@@ -383,20 +398,21 @@ def train_model(training_data=None,
                     print("")
                     print("    Generator_Loss: {0}".format(gen_loss))
 
-                # For odd iterations
-                if batch_counter % 2 == 1:
-                    # Unfreeze the conditioned generator
-                    if rule == 'mgd':
-                        cg_model.trainable = True
-                    elif rule == 'gmd':
-                        cm_model.trainable = True
-                # For even iterations
-                else:
-                    # Unfreeze the unconditioned generator
-                    if rule == 'mgd':
-                        g_model.trainable = True
-                    elif rule == 'gmd':
-                        m_model.trainable = True
+                if train_one_by_one is True:
+                    # For odd iterations
+                    if batch_counter % 2 == 1:
+                        # Unfreeze the conditioned generator
+                        if rule == 'mgd':
+                            cg_model.trainable = True
+                        elif rule == 'gmd':
+                            cm_model.trainable = True
+                    # For even iterations
+                    else:
+                        # Unfreeze the unconditioned generator
+                        if rule == 'mgd':
+                            g_model.trainable = True
+                        elif rule == 'gmd':
+                            m_model.trainable = True
 
                 # Unfreeze the discriminator
                 d_model.trainable = True
@@ -419,12 +435,34 @@ def train_model(training_data=None,
                         print ("     Level #{0} Epoch #{1} Batch #{2}".
                                format(level, e, batch_counter))
 
+                        full_adj_to_adj = \
+                            batch_utils.invert_full_matrix_np(X_prufer_gen[0, :, :])
+
                         neuron_object = \
                             plot_example_neuron_v2(X_locations_gen[0, :, :],
-                                                   X_prufer_gen[0, :, :])
+                                                   full_adj_to_adj)
                         plt.show()
+                        plt.figure(figsize=(10, 5))
+                        plt.subplot(1, 2, 1)
+                        plt.imshow(X_prufer_real[0, :, :],
+                                   interpolation='none',
+                                   cmap='Greys')
+                        plt.subplot(1, 2, 2)
+                        plt.imshow(X_prufer_gen[0, :, :],
+                                   interpolation='none',
+                                   cmap='Greys')
+
+                        plt.figure(figsize=(10, 5))
+                        plt.subplot(1, 2, 1)
+                        plt.imshow(batch_utils.invert_full_matrix_np(X_prufer_real[0, :, :]),
+                                   interpolation='none',
+                                   cmap='Greys')
+                        plt.subplot(1, 2, 2)
+                        plt.imshow(batch_utils.invert_full_matrix_np(X_prufer_gen[0, :, :]),
+                                   interpolation='none',
+                                   cmap='Greys')
                 # Display loss trace
-                if verbose:
+                if 0:
                     plt.figure(figsize=(3, 2))
                     plt.plot(list_d_loss)
                     plt.show()
