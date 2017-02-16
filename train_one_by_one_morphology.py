@@ -39,12 +39,6 @@ def clip_weights(model, weight_constraint):
     return model
 
 
-def save_model_weights():
-    """
-    cool stuff.
-    """
-
-
 def plot_example_neuron_v2(X_locations, X_parent):
     """
     Show an example neuron.
@@ -67,14 +61,14 @@ def plot_example_neuron_v2(X_locations, X_parent):
     return neuron_object
 
 
-def plot_example_neuron(X_locations, X_prufer):
+def plot_example_neuron(X_locations, X_parent):
     """
     Show an example neuron.
 
     stuff.
     """
     locations = np.squeeze(X_locations)
-    prufer = np.squeeze(X_prufer).argmax(axis=1)
+    prufer = np.squeeze(X_parent).argmax(axis=1)
 
     soma = np.array([[0., 0., 0.]])
     np.append(soma, np.squeeze(locations), axis=0)
@@ -177,53 +171,30 @@ def train_model(training_data=None,
 
     disc_model = list()
     gan_model = list()
+    level = 0
+    # Discriminator
+    d_model = models.discriminator(n_nodes=n_nodes[level],
+                                   train_loss=train_loss)
 
-    for level in range(n_levels):
-        # Discriminator
-        d_model = models.discriminator(n_nodes_in=n_nodes[level],
-                                       train_loss=train_loss)
 
-        # Generators and GANs
-        # If we are in the first level, no context
-        if level == 0:
-            m_model = \
-                models.generator(use_context=False,
-                                 n_nodes_in=n_nodes[level-1],
-                                 n_nodes_out=n_nodes[level],
-                                 batch_size=batch_size)
-            stacked_model = \
-                models.discriminator_on_generators(m_model,
-                                                   d_model,
-                                                   conditioning_rule=rule,
-                                                   input_dim=input_dim,
-                                                   n_nodes_in=n_nodes[level-1],
-                                                   n_nodes_out=n_nodes[level],
-                                                   use_context=False)
-        # In subsequent levels, we need context
-        else:
-            g_model, cg_model, m_model, cm_model = \
-                models.generator(use_context=True,
-                                 n_nodes_in=n_nodes[level-1],
-                                 n_nodes_out=n_nodes[level])
-            stacked_model = \
-                models.discriminator_on_generators(g_model,
-                                                   cg_model,
-                                                   m_model,
-                                                   cm_model,
-                                                   d_model,
-                                                   conditioning_rule=rule,
-                                                   input_dim=input_dim,
-                                                   n_nodes_in=n_nodes[level-1],
-                                                   n_nodes_out=n_nodes[level],
-                                                   use_context=True)
+    m_model = \
+        models.generator(use_context=False,
+                         n_nodes_in=n_nodes[level-1],
+                         n_nodes_out=n_nodes[level],
+                         batch_size=batch_size)
+    stacked_model = \
+        models.discriminator_on_generators(m_model,
+                                           d_model,
+                                           conditioning_rule=rule,
+                                           input_dim=input_dim,
+                                           n_nodes_in=n_nodes[level-1],
+                                           n_nodes_out=n_nodes[level],
+                                           use_context=False)
 
-        # Collect all models into a list
-        disc_model.append(d_model)
-        #geom_model.append(g_model)
-        #cond_geom_model.append(cg_model)
-        morph_model.append(m_model)
-        #cond_morph_model.append(cm_model)
-        gan_model.append(stacked_model)
+
+    disc_model.append(d_model)
+    morph_model.append(m_model)
+    gan_model.append(stacked_model)
 
     # ###############
     # Optimizers
@@ -234,174 +205,169 @@ def train_model(training_data=None,
     # ##############
     # Train
     # ##############
-    for level in range(n_levels):
-        # ---------------
-        # Compile models
-        # ---------------
-        #g_model = geom_model[level]
-        m_model = morph_model[level]
-        #cg_model = cond_geom_model[level]
-        #cm_model = cond_morph_model[level]
-        d_model = disc_model[level]
-        stacked_model = gan_model[level]
 
-        #g_model.compile(loss='mse', optimizer=optim_g)
-        m_model.compile(loss='mse', optimizer=optim_g)
-        #cg_model.compile(loss='mse', optimizer=optim_g)
-        #cm_model.compile(loss='mse', optimizer=optim_g)
+    # ---------------
+    # Compile models
+    # ---------------
 
-        d_model.trainable = False
+    m_model = morph_model[level]
+    d_model = disc_model[level]
+    stacked_model = gan_model[level]
 
-        if train_loss == 'wasserstein_loss':
-            stacked_model.compile(loss=models.wasserstein_loss,
-                                  optimizer=optim_g)
-        else:
-            stacked_model.compile(loss='binary_crossentropy',
-                                  optimizer=optim_g)
 
-        d_model.trainable = True
+    m_model.compile(loss='mse', optimizer=optim_g)
 
-        if train_loss == 'wasserstein_loss':
-            d_model.compile(loss=models.wasserstein_loss,
-                            optimizer=optim_d)
-        else:
-            d_model.compile(loss='binary_crossentropy',
-                            optimizer=optim_d)
+    d_model.trainable = False
+
+    if train_loss == 'wasserstein_loss':
+        stacked_model.compile(loss=models.wasserstein_loss,
+                              optimizer=optim_g)
+    else:
+        stacked_model.compile(loss='binary_crossentropy',
+                              optimizer=optim_g)
+
+    d_model.trainable = True
+
+    if train_loss == 'wasserstein_loss':
+        d_model.compile(loss=models.wasserstein_loss,
+                        optimizer=optim_d)
+    else:
+        d_model.compile(loss='binary_crossentropy',
+                        optimizer=optim_d)
+
+    if verbose:
+        print("")
+        print(20*"=")
+        print("Level #{0}".format(level))
+        print(20*"=")
+    # -----------------
+    # Loop over epochs
+    # -----------------
+
+    for e in range(n_epochs):
+        batch_counter = 1
+        g_iters = 0
 
         if verbose:
             print("")
-            print(20*"=")
-            print("Level #{0}".format(level))
-            print(20*"=")
-        # -----------------
-        # Loop over epochs
-        # -----------------
-        for e in range(n_epochs):
-            batch_counter = 1
-            g_iters = 0
+            print("    Epoch #{0}".format(e))
+            print("")
+
+        while batch_counter < n_batch_per_epoch:
+            list_d_loss = list()
+            list_g_loss = list()
+            # ----------------------------
+            # Step 1: Train discriminator
+            # ----------------------------
+            for d_iter in range(d_iters):
+
+                # Clip discriminator weights
+                d_model = clip_weights(d_model, weight_constraint)
+
+                # Create a batch to feed the discriminator model
+                X_parent_real = \
+                    batch_utlis_morphology.get_batch(training_data=training_data,
+                                                     batch_size=batch_size,
+                                                     batch_counter=batch_counter,
+                                                     n_nodes=n_nodes[level])
+                y_real = -1*np.ones((X_parent_real.shape[0], 1, 1))
+
+                #print X_locations_real.shape, X_parent_real.shape, y_real.shape
+
+                X_parent_gen = \
+                    batch_utlis_morphology.gen_batch(batch_size=batch_size,
+                                                     n_nodes=n_nodes,
+                                                     level=level,
+                                                     input_dim=input_dim,
+                                                     morph_model=morph_model,
+                                                     conditioning_rule=rule)
+                y_gen = 1*np.ones((X_parent_gen.shape[0], 1, 1))
+
+                X_parent = np.concatenate((X_parent_real,
+                                           X_parent_gen), axis=0)
+
+                y = np.concatenate((y_real, y_gen), axis=0)
+
+                disc_loss = \
+                    d_model.train_on_batch([X_parent],y)
+
+                list_d_loss.append(disc_loss)
 
             if verbose:
+                print("    After {0} iterations".format(d_iters))
+                print("        Discriminator Loss \
+                    = {0}".format(disc_loss))
+
+            # -------------------------------------
+            # Step 2: Train generator
+            # -------------------------------------
+            # Freeze the discriminator
+            d_model.trainable = False
+
+            noise_input = np.random.randn(batch_size, 1, input_dim)
+
+            if level == 0:
+                gen_loss = \
+                    stacked_model.train_on_batch([noise_input],
+                                                 y_real)
+            list_g_loss.append(gen_loss)
+            if verbose:
                 print("")
-                print("    Epoch #{0}".format(e))
-                print("")
+                print("    Generator_Loss: {0}".format(gen_loss))
 
-            while batch_counter < n_batch_per_epoch:
-                list_d_loss = list()
-                list_g_loss = list()
-                # ----------------------------
-                # Step 1: Train discriminator
-                # ----------------------------
-                for d_iter in range(d_iters):
+            # Unfreeze the discriminator
+            d_model.trainable = True
 
-                    # Clip discriminator weights
-                    d_model = clip_weights(d_model, weight_constraint)
+            # ---------------------
+            # Step 3: Housekeeping
+            # ---------------------
+            g_iters += 1
+            batch_counter += 1
 
-                    # Create a batch to feed the discriminator model
-                    X_locations_real, X_prufer_real = \
-                        batch_utlis_morphology.get_batch(training_data=training_data,
-                                                         batch_size=batch_size,
-                                                         batch_counter=batch_counter,
-                                                         n_nodes=n_nodes[level])
-                    y_real = -np.ones((X_locations_real.shape[0], 1, 1))
-
-                    #print X_locations_real.shape, X_prufer_real.shape, y_real.shape
-
-                    X_prufer_gen = \
-                        batch_utlis_morphology.gen_batch(batch_size=batch_size,
-                                                         n_nodes=n_nodes,
-                                                         level=level,
-                                                         input_dim=input_dim,
-                                                         morph_model=morph_model,
-                                                         conditioning_rule=rule)
-                    y_gen = np.ones((X_prufer_gen.shape[0], 1, 1))
-
-                    #print X_locations_gen.shape, X_prufer_gen.shape, y_gen.shape
-
-                    X_prufer = np.concatenate((X_prufer_real,
-                                               X_prufer_gen), axis=0)
-
-                    y = np.concatenate((y_real, y_gen), axis=0)
-
-                    disc_loss = \
-                        d_model.train_on_batch([X_prufer],y)
-
-                    list_d_loss.append(disc_loss)
+            # Save model weights (few times per epoch)
+            print(batch_counter)
+            if batch_counter % 25 == 0:
 
                 if verbose:
-                    print("    After {0} iterations".format(d_iters))
-                    print("        Discriminator Loss \
-                        = {0}".format(disc_loss))
+                    print ("     Level #{0} Epoch #{1} Batch #{2}".
+                           format(level, e, batch_counter))
 
-                # -------------------------------------
-                # Step 2: Train generators alternately
-                # -------------------------------------
-                # Freeze the discriminator
-                d_model.trainable = False
+                    full_adj_to_adj = \
+                        batch_utlis_morphology.invert_full_matrix_np(X_parent_gen[0, :, :])
 
-                noise_input = np.random.randn(batch_size, 1, input_dim)
-
-                if level == 0:
-                    gen_loss = \
-                        stacked_model.train_on_batch([noise_input],
-                                                     y_real)
-                list_g_loss.append(gen_loss)
-                if verbose:
-                    print("")
-                    print("    Generator_Loss: {0}".format(gen_loss))
-
-                # Unfreeze the discriminator
-                d_model.trainable = True
-
-                # ---------------------
-                # Step 3: Housekeeping
-                # ---------------------
-                g_iters += 1
-                batch_counter += 1
-
-                # Save model weights (few times per epoch)
-                print(batch_counter)
-                if batch_counter % 25 == 0:
-
-                    if verbose:
-                        print ("     Level #{0} Epoch #{1} Batch #{2}".
-                               format(level, e, batch_counter))
-
-                        full_adj_to_adj = \
-                            batch_utlis_morphology.invert_full_matrix_np(X_prufer_gen[0, :, :])
-
-                        #neuron_object = \
-                        #    plot_example_neuron_v2(X_locations_gen[0, :, :],
-                        #                           full_adj_to_adj)
-                        plt.show()
-                        plt.figure(figsize=(10, 5))
-                        plt.subplot(1, 2, 1)
-                        plt.imshow(X_prufer_real[0, :, :],
-                                   interpolation='none',
-                                   cmap='Greys')
-                        plt.subplot(1, 2, 2)
-                        plt.imshow(X_prufer_gen[0, :, :],
-                                   interpolation='none',
-                                   cmap='Greys')
-
-                        plt.figure(figsize=(10, 5))
-                        plt.subplot(1, 2, 1)
-                        plt.imshow(batch_utlis_morphology.invert_full_matrix_np(X_prufer_real[0, :, :]),
-                                   interpolation='none',
-                                   cmap='Greys')
-                        plt.subplot(1, 2, 2)
-                        plt.imshow(batch_utlis_morphology.invert_full_matrix_np(X_prufer_gen[0, :, :]),
-                                   interpolation='none',
-                                   cmap='Greys')
-                # Display loss trace
-                if 0:
-                    plt.figure(figsize=(3, 2))
-                    plt.plot(list_d_loss)
+                    #neuron_object = \
+                    #    plot_example_neuron_v2(X_locations_gen[0, :, :],
+                    #                           full_adj_to_adj)
                     plt.show()
+                    plt.figure(figsize=(10, 5))
+                    plt.subplot(1, 2, 1)
+                    plt.imshow(X_parent_real[0, :, :],
+                               interpolation='none',
+                               cmap='Greys')
+                    plt.subplot(1, 2, 2)
+                    plt.imshow(X_parent_gen[0, :, :],
+                               interpolation='none',
+                               cmap='Greys')
 
-                # Save models
-                morph_model[level] = m_model
-                disc_model[level] = d_model
-                gan_model[level] = stacked_model
+                    plt.figure(figsize=(10, 5))
+                    plt.subplot(1, 2, 1)
+                    plt.imshow(batch_utlis_morphology.invert_full_matrix_np(X_parent_real[0, :, :]),
+                               interpolation='none',
+                               cmap='Greys')
+                    plt.subplot(1, 2, 2)
+                    plt.imshow(batch_utlis_morphology.invert_full_matrix_np(X_parent_gen[0, :, :]),
+                               interpolation='none',
+                               cmap='Greys')
+            # Display loss trace
+            if 0:
+                plt.figure(figsize=(3, 2))
+                plt.plot(list_d_loss)
+                plt.show()
+
+            # Save models
+            morph_model[level] = m_model
+            disc_model[level] = d_model
+            gan_model[level] = stacked_model
 
     return morph_model, \
         disc_model, \

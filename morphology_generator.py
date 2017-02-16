@@ -9,30 +9,89 @@ from keras.layers.recurrent import LSTM
 from keras import backend as K
 
 
-# Embedding layers
-def embedder(n_nodes=10, hidden_dim=20, embedding_dim=100):
-    """
-    Joint embedding of geometric coordinates and tree morphology.
+def masked_softmax(input_layer, n_nodes, batch_size):
 
-    Parameters
-    ----------
-    n_nodes: int
-        number of nodes
-    hidden_dim: int
-        number of hidden dimensions for LSTM
-    embedding_dim: int
-        embedding_dimension
+    mask_lower = K.theano.tensor.tril(K.ones((n_nodes - 1, n_nodes)))
+    mask_upper = \
+        K.theano.tensor.triu(-100. * K.ones((n_nodes - 1, n_nodes)), 1)
+    mask_layer = mask_lower * input_layer + mask_upper
+    mask_layer = mask_layer + 2*K.eye(n_nodes)[0:n_nodes - 1,0:n_nodes]
+    mask_layer = \
+        K.reshape(mask_layer, (batch_size * (n_nodes - 1), n_nodes))
+    softmax_layer = K.softmax(mask_layer)
+    output_layer = K.reshape(softmax_layer, (batch_size, n_nodes - 1, n_nodes))
+    return output_layer
 
-    Returns
-    -------
-    geometry_input: keras layer object
-        input layer
-    morphology_input: keras layer object
-        input layer
-    embedding: keras layer object
-        embedding layer
-    """
+def full_matrix(adjacency, n_nodes):
+    return K.theano.tensor.nlinalg.matrix_inverse(K.eye(n_nodes) - adjacency)
 
+
+# Masked softmax Lambda layer
+def masked_softmax_full(input_layer, n_nodes, batch_size):
+    mask_layer = masked_softmax(input_layer, n_nodes, batch_size)
+    mask_layer = \
+        K.concatenate([K.zeros(shape=[batch_size, 1, n_nodes]), mask_layer],
+                      axis=1)
+    result, updates = \
+        K.theano.scan(fn=lambda n: full_matrix(mask_layer[n, : , :], n_nodes),
+                      sequences=K.arange(batch_size))
+    return result[:, 1:, :]
+
+
+def generator(n_nodes_in=10,
+              n_nodes_out=20,
+              noise_dim=100,
+              embedding_dim=100,
+              hidden_dim=30,
+              batch_size=64,
+              use_context=True):
+
+    noise_input = Input(shape=(1, noise_dim), name='noise_input')
+    #hidden_dim = n_nodes_out
+    morphology_hidden_dim = hidden_dim * (n_nodes_out - 1)
+    morphology_hidden1 = Dense(morphology_hidden_dim)(noise_input)
+    morphology_hidden2 = Dense(morphology_hidden_dim)(morphology_hidden1)
+    morphology_hidden3 = Dense(n_nodes_out * (n_nodes_out - 1))(morphology_hidden2)
+    # Reshape
+    morphology_reshaped = \
+        Reshape(target_shape=(n_nodes_out - 1, n_nodes_out))(morphology_hidden3)
+    # # LSTM
+    # morphology_lstm1 = \
+    #     LSTM(input_dim=hidden_dim,
+    #          input_length=n_nodes_out - 1,
+    #          output_dim=hidden_dim,
+    #          return_sequences=True)(morphology_reshaped)
+    # morphology_lstm2 = \
+    #     LSTM(input_dim=hidden_dim,
+    #          input_length=n_nodes_out - 1,
+    #          output_dim=hidden_dim,
+    #          return_sequences=True)(morphology_lstm1)
+    # # TimeDistributed
+    # morphology_dense = \
+    #     TimeDistributed(Dense(input_dim=hidden_dim,
+    #                           output_dim=n_nodes_out,
+    #                           activation='sigmoid'))(morphology_lstm2)
+
+    lambda_args = {'n_nodes': n_nodes_out, 'batch_size': batch_size}
+    morphology_output = \
+        Lambda(masked_softmax_full,
+               output_shape=(n_nodes_out - 1, n_nodes_out),
+               arguments=lambda_args)(morphology_reshaped)
+
+    # Assign inputs and outputs of the model
+    morphology_model = \
+        Model(input=[noise_input],
+              output=[morphology_output])
+
+    morphology_model.summary()
+    return morphology_model
+
+
+# Discriminator
+def discriminator(n_nodes=10,
+                  embedding_dim=100,
+                  hidden_dim=50,
+                  train_loss='wasserstein_loss'):
     morphology_input = Input(shape=(n_nodes - 1, n_nodes))
 
     # LSTM
@@ -49,268 +108,6 @@ def embedder(n_nodes=10, hidden_dim=20, embedding_dim=100):
     embedding = Dense(input_dim=(n_nodes - 1) * hidden_dim,
                       output_dim=embedding_dim,
                       name='embedding')(embedding_reshaped)
-    return morphology_input, embedding
-
-
-def morphology_embedder(n_nodes=10, hidden_dim=20, embedding_dim=100):
-    """
-    Embedding of tree morphology (softmax Prufer code).
-
-    Parameters
-    ----------
-    n_nodes: int
-        number of nodes
-    hidden_dim: int
-        number of hidden dimeisions for LSTM
-    embedding_dim: int
-        embedding_dimension
-
-    Returns
-    -------
-    morphology_input: keras layer object
-        input layer
-    morphology_embedding: keras layer object
-        embedding layer
-    """
-    morphology_input = Input(shape=(n_nodes - 1, n_nodes))
-
-    # LSTM
-    morphology_embedding_lstm1 = \
-        LSTM(input_dim=n_nodes,
-             input_length=n_nodes - 1,
-             output_dim=hidden_dim,
-             return_sequences=True)(morphology_input)
-
-    morphology_embedding_reshaped = \
-        Reshape(target_shape=
-                (1, (n_nodes - 1) * hidden_dim))(morphology_embedding_lstm1)
-
-    morphology_embedding = \
-        Dense(input_dim=(n_nodes - 1) * n_nodes,
-              output_dim=embedding_dim,
-              name='morphology_embedding')(morphology_embedding_reshaped)
-    return morphology_input, morphology_embedding
-
-
-# Masked softmax Lambda layer
-def masked_softmax(input_layer, n_nodes, batch_size):
-    """
-    A Lambda layer to mask a matrix of outputs to be lower-triangular.
-
-    Each row must sum up to one. We apply a lower triangular mask of ones
-    and then add an upper triangular mask of a large negative number.
-
-    Parameters
-    ----------
-    input_layer: keras layer object
-        (n x 1, n) matrix
-
-    Returns
-    -------
-    output_layer: keras layer object
-        (n x 1, n) matrix
-    """
-    mask_lower = K.theano.tensor.tril(K.ones((n_nodes - 1, n_nodes)))
-    mask_upper = \
-        K.theano.tensor.triu(-100. * K.ones((n_nodes - 1, n_nodes)), 1)
-    mask_layer = mask_lower * K.log(input_layer) + mask_upper
-    mask_layer = \
-        K.reshape(mask_layer, (batch_size * (n_nodes - 1), n_nodes))
-    softmax_layer = K.softmax(mask_layer)
-    output_layer = K.reshape(softmax_layer, (batch_size, n_nodes - 1, n_nodes))
-    return output_layer
-    # return input_layer
-
-
-def full_matrix(adjacency, n_nodes):
-    """
-    Returning the full matrix of adjacency.
-
-    Parameters
-    ----------
-    adjacency: keras layer object
-        (n , n) matrix
-    Returns
-    -------
-    keras layer object
-        (n , n) matrix
-    """
-    return K.theano.tensor.nlinalg.matrix_inverse(K.eye(n_nodes) - adjacency)
-
-
-# Masked softmax Lambda layer
-def masked_softmax_full(input_layer, n_nodes, batch_size):
-    """
-    A Lambda layer to mask a matrix of outputs to be lower-triangular.
-
-    Each row must sum up to one. We apply a lower triangular mask of ones
-    and then add an upper triangular mask of a large negative number.
-    After that we return the full adjacency matrix.
-
-    Parameters
-    ----------
-    input_layer: keras layer object
-        (n x 1, n) matrix
-    Returns
-    -------
-    output_layer: keras layer object
-        (n x 1, n) matrix
-    """
-    mask_lower = K.theano.tensor.tril(K.ones((n_nodes - 1, n_nodes)))
-
-    mask_lower = K.theano.tensor.tril(K.ones((n_nodes - 1, n_nodes)))
-    mask_upper = K.theano.tensor.triu(-100.*K.ones((n_nodes - 1, n_nodes)), 1)
-    mask_layer = mask_lower * input_layer + mask_upper
-    mask_layer = K.reshape(mask_layer, (batch_size * (n_nodes - 1), n_nodes))
-    softmax_layer = K.softmax(mask_layer)
-    mask_layer = K.reshape(softmax_layer, (batch_size, n_nodes - 1, n_nodes))
-
-    mask_layer = \
-        K.concatenate([K.zeros(shape=[batch_size, 1, n_nodes]), mask_layer],
-                      axis=1)
-
-    result, updates = \
-        K.theano.scan(fn=lambda n: full_matrix(mask_layer[n, : , :], n_nodes),
-                      sequences=K.arange(batch_size))
-
-    return result[:, 1:, :]
-
-
-# Generators
-def generator(n_nodes_in=10,
-              n_nodes_out=20,
-              noise_dim=100,
-              embedding_dim=100,
-              hidden_dim=20,
-              batch_size=64,
-              use_context=True):
-    """
-    Generator network.
-
-    Parameters
-    ----------
-    n_nodes_in: int
-        number of nodes in the tree providing context input
-    n_nodes_out: int
-        number of nodes in the output tree
-    noise_dim: int
-        dimensionality of noise input
-    embedding_dim: int
-        dimensionality of embedding for context input
-    use_context: bool
-        if True, use context, else only noise input
-
-    Returns
-    -------
-    geometry_model: keras model object
-        model of geometry generator
-    conditional_geometry_model: keras model object
-        model of geometry generator conditioned on morphology
-    morphology_model: keras model object
-        model of morphology generator
-    conditional_morphology_model: keras model object
-        model of morphology generator conditioned on geometry
-    """
-
-    # Generate noise input
-    noise_input = Input(shape=(1, noise_dim), name='noise_input')
-
-    # Embed conditional information from current level
-
-    morphology_input, morphology_embedding = \
-        morphology_embedder(n_nodes=n_nodes_out,
-                            hidden_dim=hidden_dim,
-                            embedding_dim=embedding_dim)
-
-    # Concatenate prior context and noise inputs
-    if use_context is True:
-        all_common_inputs = merge([prior_embedding,
-                                   noise_input], mode='concat')
-    else:
-        all_common_inputs = noise_input
-
-    # -----------------
-    # Morphology model
-    # -----------------
-
-    # Dense
-    morphology_hidden_dim = hidden_dim * (n_nodes_out - 1)
-    morphology_hidden1 = Dense(morphology_hidden_dim)(all_common_inputs)
-    morphology_hidden2 = Dense(morphology_hidden_dim)(morphology_hidden1)
-
-    # Reshape
-    morphology_reshaped = \
-        Reshape(target_shape=(n_nodes_out - 1, hidden_dim))(morphology_hidden2)
-
-    # LSTM
-    morphology_lstm1 = \
-        LSTM(input_dim=hidden_dim,
-             input_length=n_nodes_out - 1,
-             output_dim=hidden_dim,
-             return_sequences=True)(morphology_reshaped)
-    morphology_lstm2 = \
-        LSTM(input_dim=hidden_dim,
-             input_length=n_nodes_out - 1,
-             output_dim=hidden_dim,
-             return_sequences=True)(morphology_lstm1)
-    # TimeDistributed
-    morphology_dense = \
-        TimeDistributed(Dense(input_dim=hidden_dim,
-                              output_dim=n_nodes_out,
-                              activation='sigmoid'))(morphology_lstm2)
-
-    lambda_args = {'n_nodes': n_nodes_out, 'batch_size': batch_size}
-    morphology_output = \
-        Lambda(masked_softmax_full,
-               output_shape=(n_nodes_out - 1, n_nodes_out),
-               arguments=lambda_args)(morphology_dense)
-
-    # Assign inputs and outputs of the model
-    if use_context is True:
-        morphology_model = \
-            Model(input=[prior_geometry_input,
-                         prior_morphology_input,
-                         noise_input],
-                  output=[morphology_output])
-    else:
-        morphology_model = \
-            Model(input=[noise_input],
-                  output=[morphology_output])
-
-    morphology_model.summary()
-    return morphology_model
-
-
-# Discriminator
-def discriminator(n_nodes_in=10,
-                  embedding_dim=100,
-                  hidden_dim=50,
-                  train_loss='wasserstein_loss'):
-    """
-    Discriminator network.
-
-    Parameters
-    ----------
-    n_nodes_in: int
-        number of nodes in the tree providing context input
-    embedding_dim: int
-        dimensionality of embedding for context input
-    hidden_dim: int
-        dimensionality of hidden layers
-
-    Returns
-    -------
-    discriminator_model: keras model object
-        model of discriminator
-    """
-    # Joint embedding of geometry and morphology
-    morphology_input, embedding = \
-        embedder(n_nodes=n_nodes_in,
-                 embedding_dim=embedding_dim)
-
-    # --------------------
-    # Discriminator model
-    # -------------------=
     discriminator_hidden1 = \
         Dense(hidden_dim)(embedding)
     discriminator_hidden2 = \
@@ -322,10 +119,6 @@ def discriminator(n_nodes_in=10,
         discriminator_output = \
             Dense(1, activation='sigmoid')(discriminator_hidden2)
 
-    # discriminator_model = Model(input=[geometry_input,
-    #                                    morphology_input],
-    #                             output=[discriminator_output])
-
     discriminator_model = Model(input=[morphology_input],
                                 output=[discriminator_output])
 
@@ -334,20 +127,9 @@ def discriminator(n_nodes_in=10,
 
 
 def wasserstein_loss(y_true, y_pred):
-    """
-    Custom loss function for Wasserstein critic.
-
-    Parameters
-    ----------
-    y_true: keras tensor
-        true labels: -1 for data and +1 for generated sample
-    y_pred: keras tensor
-        predicted EM score
-    """
     return K.mean(y_true * y_pred)
 
 
-# Discriminator on generators
 def discriminator_on_generators(morphology_model,
                                 discriminator_model,
                                 conditioning_rule='mgd',
@@ -355,63 +137,17 @@ def discriminator_on_generators(morphology_model,
                                 n_nodes_in=10,
                                 n_nodes_out=20,
                                 use_context=True):
-    """
-    Discriminator stacked on the generators.
 
-    Parameters
-    ----------
-    geometry_model: keras model object
-        model object that generates the geometry
-    conditional_geometry_model: keras model object
-        model object that generates the geometry conditioned on morphology
-    morphology_model: keras model object
-        model object that generates the morphology
-    conditional_morphology_model: keras model object
-        model object that generates the morphology conditioned on geometry
-    discriminator_model: keras model object
-        model object for the discriminator
-    conditioning_rule: str
-        'mgd': P_w(disc_loss|g,m) P(g|m) P(m)
-        'gmd': P_w(disc_loss|g,m) P(m|g) P(g)
-    input_dim: int
-        dimensionality of noise input
-    n_nodes_in: int
-        number of nodes in the tree providing
-        prior context input for the generators
-    n_nodes_out: int
-        number of nodes in the output tree
-    use_context: bool
-        if True, use context, else only noise input for the generators
-
-    Returns
-    -------
-    model: keras model object
-        model of the discriminator stacked on the generator.
-    """
-    # Inputs
 
     noise_input = Input(shape=(1, input_dim), name='noise_input')
-
-
-    # ------------------
-    # Generator outputs
-    # ------------------
 
     if conditioning_rule == 'm':
         morphology_output = \
             morphology_model([noise_input])
 
-    # ---------------------
-    # Discriminator output
-    # ---------------------
-
-
     discriminator_output = \
         discriminator_model([morphology_output])
 
-    # Stack discriminator on generator
-
     model = Model([noise_input],
                   [discriminator_output])
-
     return model

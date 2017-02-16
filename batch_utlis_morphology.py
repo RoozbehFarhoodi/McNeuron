@@ -59,7 +59,7 @@ def get_batch(training_data, batch_size, batch_counter, n_nodes):
     -------
     X_locations_real: an array of size (batch_size x n_nodes - 1 x 3)
         the location of the nodes of the neuorns.
-    X_prufer_real: an array of size (batch_size x n_nodes x n_nodes - 2)
+    X_parent_real: an array of size (batch_size x n_nodes x n_nodes - 2)
         the prufer code for morphology of the neuron.
     """
     enc = OneHotEncoder(n_values=n_nodes)
@@ -68,17 +68,17 @@ def get_batch(training_data, batch_size, batch_counter, n_nodes):
     tmp = np.reshape(training_data['morphology']['n'+str(n_nodes)][select, :],
                      [1, (n_nodes - 1) * batch_size])
 
-    X_prufer_real = np.reshape(enc.fit_transform(tmp).toarray(),
+    X_parent_real = np.reshape(enc.fit_transform(tmp).toarray(),
                                [batch_size, n_nodes - 1, n_nodes])
 
-    X_prufer_real = batch_full_np(X_prufer_real)
+    X_parent_real = batch_full_np(X_parent_real)
 
-    #X_prufer_real = np.swapaxes(X_prufer_real, 1, 2)
+    #X_parent_real = np.swapaxes(X_parent_real, 1, 2)
 
     X_locations_real = \
         training_data['geometry']['n'+str(n_nodes)][select, :, :]
 
-    return X_locations_real, X_prufer_real
+    return X_parent_real
 
 
 def gen_batch(morph_model,
