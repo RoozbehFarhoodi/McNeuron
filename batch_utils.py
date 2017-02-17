@@ -28,7 +28,7 @@ def batch_full_np(input_data):
     return output_data[:, 1:, :]
 
 
-def get_batch(training_data, batch_size, batch_counter, n_nodes):
+def get_batch(X_prufer_cut, batch_size, n_nodes):
     """
     Make a batch of morphological and geometrical data.
 
@@ -63,22 +63,13 @@ def get_batch(training_data, batch_size, batch_counter, n_nodes):
         the prufer code for morphology of the neuron.
     """
     enc = OneHotEncoder(n_values=n_nodes)
-    select = range((batch_counter - 1) * batch_size,
-                   batch_counter * batch_size)
-    tmp = np.reshape(training_data['morphology']['n'+str(n_nodes)][select, :],
-                     [1, (n_nodes - 1) * batch_size])
 
-    X_prufer_real = np.reshape(enc.fit_transform(tmp).toarray(),
+    X_prufer_real = np.reshape(enc.fit_transform(X_prufer_cut).toarray(),
                                [batch_size, n_nodes - 1, n_nodes])
 
     X_prufer_real = batch_full_np(X_prufer_real)
 
-    #X_prufer_real = np.swapaxes(X_prufer_real, 1, 2)
-
-    X_locations_real = \
-        training_data['geometry']['n'+str(n_nodes)][select, :, :]
-
-    return X_locations_real, X_prufer_real
+    return X_prufer_real
 
 
 def gen_batch(geom_model,
@@ -139,7 +130,9 @@ def gen_batch(geom_model,
                 locations = geom_model[l].predict(noise_code)
                 prufer = cond_morph_model[l].predict([noise_code,
                                                       locations])
-
+            elif conditioning_rule == 'none':
+                locations = geom_model[l].predict(noise_code)
+                prufer = morph_model[l].predict(noise_code)
         else:
             # Assign previous level's geometry and morphology
             # as priors for the next level
@@ -168,5 +161,14 @@ def gen_batch(geom_model,
                                                  prufer_prior,
                                                  noise_code,
                                                  locations])
+            elif conditioning_rule == 'none':
+                locations = \
+                    geom_model[l].predict([locations_prior,
+                                           prufer_prior,
+                                           noise_code])
+                prufer = \
+                    cond_morph_model[l].predict([locations_prior,
+                                                 prufer_prior,
+                                                 noise_code])
 
     return locations, prufer

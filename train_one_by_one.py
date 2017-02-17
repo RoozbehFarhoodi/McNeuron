@@ -30,7 +30,7 @@ def clip_weights(model, weight_constraint):
         model with clipped weights
     """
     for l in model.layers:
-        if 'dense' in l.name:
+        if True:  # 'dense' in l.name:
             weights = l.get_weights()
             weights = \
                 [np.clip(w, weight_constraint[0],
@@ -232,8 +232,8 @@ def train_model(training_data=None,
     # ###############
     # Optimizers
     # ###############
-    optim_d = Adagrad()  # RMSprop(lr=lr_discriminator)
-    optim_g = Adagrad()  # RMSprop(lr=lr_generator)
+    optim_d = RMSprop(lr=lr_discriminator)
+    optim_g = RMSprop(lr=lr_generator)
 
     # ##############
     # Train
@@ -301,12 +301,24 @@ def train_model(training_data=None,
                     d_model = clip_weights(d_model, weight_constraint)
 
                     # Create a batch to feed the discriminator model
-                    X_locations_real, X_prufer_real = \
-                        batch_utils.get_batch(training_data=training_data,
+                    select = range((batch_counter - 1) * batch_size,
+                                   batch_counter * batch_size)
+                    X_locations_real = \
+                        training_data['geometry']['n'+str(n_nodes[level])][select, :, :]
+
+                    X_prufer_cut = \
+                        np.reshape(training_data['morphology']['n'+str(n_nodes[level])][select, :],
+                                   [1, (n_nodes[level] - 1) * batch_size])
+
+                    X_prufer_real = \
+                        batch_utils.get_batch(X_prufer_cut=X_prufer_cut,
                                               batch_size=batch_size,
-                                              batch_counter=batch_counter,
                                               n_nodes=n_nodes[level])
+
+                    # if train_loss == 'wasserstein_loss':
                     y_real = -np.ones((X_locations_real.shape[0], 1, 1))
+                    # else:
+                        # y_real = np.ones((X_locations_real.shape[0], 1, 1))
 
                     #print X_locations_real.shape, X_prufer_real.shape, y_real.shape
 
@@ -320,7 +332,10 @@ def train_model(training_data=None,
                                               morph_model=morph_model,
                                               cond_morph_model=cond_morph_model,
                                               conditioning_rule=rule)
+                    # if train_loss == 'wasserstein_loss':
                     y_gen = np.ones((X_locations_gen.shape[0], 1, 1))
+                    # else:
+                    #     y_gen = np.zeros((X_locations_gen.shape[0], 1, 1))
 
                     #print X_locations_gen.shape, X_prufer_gen.shape, y_gen.shape
 
@@ -354,7 +369,7 @@ def train_model(training_data=None,
 
                 if train_one_by_one is True:
                     # For odd iterations
-                    if batch_counter % 2 == 1:
+                    if batch_counter % 20 in range(10):
                         # Freeze the conditioned generator
                         if rule == 'mgd':
                             cg_model.trainable = False
@@ -400,7 +415,7 @@ def train_model(training_data=None,
 
                 if train_one_by_one is True:
                     # For odd iterations
-                    if batch_counter % 2 == 1:
+                    if batch_counter % 20 in range(10):
                         # Unfreeze the conditioned generator
                         if rule == 'mgd':
                             cg_model.trainable = True
@@ -438,9 +453,14 @@ def train_model(training_data=None,
                         full_adj_to_adj = \
                             batch_utils.invert_full_matrix_np(X_prufer_gen[0, :, :])
 
+                        # neuron_object = \
+                        #     plot_example_neuron_v2(X_locations_gen[0, :, :],
+                        #                            full_adj_to_adj)
+
                         neuron_object = \
                             plot_example_neuron_v2(X_locations_gen[0, :, :],
                                                    full_adj_to_adj)
+
                         plt.show()
                         plt.figure(figsize=(10, 5))
                         plt.subplot(1, 2, 1)
@@ -462,7 +482,7 @@ def train_model(training_data=None,
                                    interpolation='none',
                                    cmap='Greys')
                 # Display loss trace
-                if 0:
+                if verbose:
                     plt.figure(figsize=(3, 2))
                     plt.plot(list_d_loss)
                     plt.show()

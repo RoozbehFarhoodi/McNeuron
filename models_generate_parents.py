@@ -1,11 +1,13 @@
 """Collection of Keras models for hierarchical GANs."""
 
 # Imports
-from keras.layers.core import Dense, Reshape, RepeatVector, Lambda
+from keras.layers.core import Dense, Reshape, RepeatVector, Lambda, Dropout
 from keras.layers import Input, merge
 from keras.models import Model
 from keras.layers.wrappers import TimeDistributed
 from keras.layers.recurrent import LSTM
+from keras.layers.normalization import BatchNormalization
+from keras.regularizers import l2
 from keras import backend as K
 
 
@@ -35,24 +37,36 @@ def embedder(n_nodes=10, hidden_dim=20, embedding_dim=100):
     geometry_input = Input(shape=(n_nodes - 1, 3))
     morphology_input = Input(shape=(n_nodes - 1, n_nodes))
 
+    # Get features
+
     # Merge
     merged_layer = merge([geometry_input,
                           morphology_input], mode='concat')
 
-    # LSTM
+    LSTM
     embedding_lstm1 = \
         LSTM(input_dim=(n_nodes + 3),
              input_length=n_nodes - 1,
              output_dim=hidden_dim,
+             W_regularizer=l2(0.1),
+             U_regularizer=l2(0.1),
              return_sequences=True)(merged_layer)
+    # embedding_lstm1 = BatchNormalization()(embedding_lstm1)
 
     embedding_reshaped = \
         Reshape(target_shape=
                 (1, (n_nodes - 1) * hidden_dim))(embedding_lstm1)
 
+    # embedding_reshaped = \
+    #     Reshape(target_shape=
+    #             (1, (n_nodes - 1) * (n_nodes + 3)))(merged_layer)
+
     embedding = Dense(input_dim=(n_nodes - 1) * hidden_dim,
                       output_dim=embedding_dim,
+                      W_regularizer=l2(0.01),
                       name='embedding')(embedding_reshaped)
+    # embedding = BatchNormalization()(embedding)
+
     return geometry_input, morphology_input, embedding
 
 
@@ -83,14 +97,20 @@ def geometry_embedder(n_nodes=10, hidden_dim=20, embedding_dim=100):
         LSTM(input_dim=3,
              input_length=n_nodes - 1,
              output_dim=hidden_dim,
+             W_regularizer=l2(0.1),
+             U_regularizer=l2(0.1),
              return_sequences=True)(geometry_input)
+    # geometry_embedding_lstm1 = BatchNormalization()(geometry_embedding_lstm1)
 
     geometry_reshaped = \
         Reshape(target_shape=
                 (1, (n_nodes - 1) * hidden_dim))(geometry_embedding_lstm1)
     geometry_embedding = Dense(input_dim=(n_nodes - 1) * hidden_dim,
                                output_dim=embedding_dim,
+                               W_regularizer=l2(0.01),
                                name='geometry_embedding')(geometry_reshaped)
+    # geometry_embedding = BatchNormalization()(geometry_embedding)
+
     return geometry_input, geometry_embedding
 
 
@@ -121,7 +141,11 @@ def morphology_embedder(n_nodes=10, hidden_dim=20, embedding_dim=100):
         LSTM(input_dim=n_nodes,
              input_length=n_nodes - 1,
              output_dim=hidden_dim,
+             W_regularizer=l2(0.1),
+             U_regularizer=l2(0.1),
              return_sequences=True)(morphology_input)
+    # morphology_embedding_lstm1 = \
+    #     BatchNormalization()(morphology_embedding_lstm1)
 
     morphology_embedding_reshaped = \
         Reshape(target_shape=
@@ -130,7 +154,10 @@ def morphology_embedder(n_nodes=10, hidden_dim=20, embedding_dim=100):
     morphology_embedding = \
         Dense(input_dim=(n_nodes - 1) * n_nodes,
               output_dim=embedding_dim,
+              W_regularizer=l2(0.01),
               name='morphology_embedding')(morphology_embedding_reshaped)
+    # morphology_embedding = BatchNormalization()(morphology_embedding)
+
     return morphology_input, morphology_embedding
 
 
@@ -155,13 +182,13 @@ def masked_softmax(input_layer, n_nodes, batch_size):
     mask_lower = K.theano.tensor.tril(K.ones((n_nodes - 1, n_nodes)))
     mask_upper = \
         K.theano.tensor.triu(-100. * K.ones((n_nodes - 1, n_nodes)), 1)
-    mask_layer = mask_lower * K.log(input_layer) + mask_upper
+    mask_layer = mask_lower * input_layer + mask_upper
+    mask_layer = mask_layer + 2 * K.eye(n_nodes)[0:n_nodes - 1, 0:n_nodes]
     mask_layer = \
         K.reshape(mask_layer, (batch_size * (n_nodes - 1), n_nodes))
     softmax_layer = K.softmax(mask_layer)
     output_layer = K.reshape(softmax_layer, (batch_size, n_nodes - 1, n_nodes))
     return output_layer
-    # return input_layer
 
 
 def full_matrix(adjacency, n_nodes):
@@ -198,31 +225,14 @@ def masked_softmax_full(input_layer, n_nodes, batch_size):
     output_layer: keras layer object
         (n x 1, n) matrix
     """
-    mask_lower = K.theano.tensor.tril(K.ones((n_nodes - 1, n_nodes)))
-
-    mask_upper = \
-        K.theano.tensor.triu(-100. * K.ones((n_nodes - 1, n_nodes)), 1)
-
-    mask_layer = mask_lower * K.log(input_layer) + mask_upper
-
-    mask_layer = \
-        K.reshape(mask_layer, (batch_size * (n_nodes - 1), n_nodes))
-
-    softmax_layer = K.softmax(mask_layer)
-
-    mask_layer = \
-        K.reshape(softmax_layer, (batch_size, n_nodes - 1, n_nodes))
-
+    mask_layer = masked_softmax(input_layer, n_nodes, batch_size)
     mask_layer = \
         K.concatenate([K.zeros(shape=[batch_size, 1, n_nodes]), mask_layer],
                       axis=1)
-
     result, updates = \
-        K.theano.scan(fn = lambda n: full_matrix(mask_layer[n, : , :], n_nodes),
+        K.theano.scan(fn=lambda n: full_matrix(mask_layer[n, :, :], n_nodes),
                       sequences=K.arange(batch_size))
-
     return result[:, 1:, :]
-    # return input_layer
 
 
 # Generators
@@ -297,28 +307,40 @@ def generator(n_nodes_in=10,
     # Dense
     geometry_hidden_dim = (n_nodes_out - 1) * 3
     geometry_hidden1 = Dense(geometry_hidden_dim)(all_common_inputs)
+    # geometry_hidden1 = BatchNormalization()(geometry_hidden1)
     geometry_hidden2 = Dense(geometry_hidden_dim)(geometry_hidden1)
+    # geometry_hidden2 = BatchNormalization()(geometry_hidden2)
 
     # Reshape
     geometry_reshaped = \
         Reshape(target_shape=(n_nodes_out - 1, 3))(geometry_hidden2)
 
-    # LSTM
-    geometry_lstm1 = \
-        LSTM(input_dim=3,
-             input_length=n_nodes_out - 1,
-             output_dim=3,
-             return_sequences=True)(geometry_reshaped)
-    geometry_lstm2 = \
-        LSTM(input_dim=3,
-             input_length=n_nodes_out - 1,
-             output_dim=3,
-             return_sequences=True)(geometry_lstm1)
-    # TimeDistributed
-    geometry_output = \
-        TimeDistributed(Dense(input_dim=3,
-                              output_dim=3,
-                              activation='linear'))(geometry_lstm2)
+    # # LSTM
+    # geometry_lstm1 = \
+    #     LSTM(input_dim=3,
+    #          input_length=n_nodes_out - 1,
+    #          output_dim=3,
+    #          W_regularizer=l2(0.1),
+    #          U_regularizer=l2(0.1),
+    #          return_sequences=True)(geometry_reshaped)
+    # # geometry_lstm1 = BatchNormalization()(geometry_lstm1)
+    #
+    # geometry_lstm2 = \
+    #     LSTM(input_dim=3,
+    #          input_length=n_nodes_out - 1,
+    #          output_dim=3,
+    #          W_regularizer=l2(0.1),
+    #          U_regularizer=l2(0.1),
+    #          return_sequences=True)(geometry_lstm1)
+    # # geometry_lstm2 = BatchNormalization()(geometry_lstm2)
+    #
+    # # TimeDistributed
+    # geometry_output = \
+    #     TimeDistributed(Dense(input_dim=3,
+    #                           output_dim=3,
+    #                           W_regularizer=l2(0.01),
+    #                           activation='linear'))(geometry_lstm2)
+    geometry_output = geometry_reshaped
 
     # Assign inputs and outputs of the model
     if use_context is True:
@@ -341,28 +363,41 @@ def generator(n_nodes_in=10,
     # Dense
     geometry_hidden_dim = (n_nodes_out - 1) * 3
     geometry_hidden1 = Dense(geometry_hidden_dim)(all_geometry_inputs)
+    # geometry_hidden1 = BatchNormalization()(geometry_hidden1)
     geometry_hidden2 = Dense(geometry_hidden_dim)(geometry_hidden1)
+    # geometry_hidden2 = BatchNormalization()(geometry_hidden2)
 
     # Reshape
     geometry_reshaped = \
         Reshape(target_shape=(n_nodes_out - 1, 3))(geometry_hidden2)
 
-    # LSTM
-    geometry_lstm1 = \
-        LSTM(input_dim=3,
-             input_length=n_nodes_out - 1,
-             output_dim=3,
-             return_sequences=True)(geometry_reshaped)
-    geometry_lstm2 = \
-        LSTM(input_dim=3,
-             input_length=n_nodes_out - 1,
-             output_dim=3,
-             return_sequences=True)(geometry_lstm1)
-    # TimeDistributed
-    geometry_output = \
-        TimeDistributed(Dense(input_dim=3,
-                              output_dim=3,
-                              activation='linear'))(geometry_lstm2)
+    # # LSTM
+    # geometry_lstm1 = \
+    #     LSTM(input_dim=3,
+    #          input_length=n_nodes_out - 1,
+    #          output_dim=3,
+    #          W_regularizer=l2(0.1),
+    #          U_regularizer=l2(0.1),
+    #          return_sequences=True)(geometry_reshaped)
+    # # geometry_lstm1 = BatchNormalization()(geometry_lstm1)
+    #
+    # geometry_lstm2 = \
+    #     LSTM(input_dim=3,
+    #          input_length=n_nodes_out - 1,
+    #          output_dim=3,
+    #          W_regularizer=l2(0.1),
+    #          U_regularizer=l2(0.1),
+    #          return_sequences=True)(geometry_lstm1)
+    # # geometry_lstm2 = BatchNormalization()(geometry_lstm2)
+    #
+    # # TimeDistributed
+    # geometry_output = \
+    #     TimeDistributed(Dense(input_dim=3,
+    #                           output_dim=3,
+    #                           W_regularizer=l2(0.01),
+    #                           activation='linear'))(geometry_lstm2)
+
+    geometry_output = geometry_reshaped
 
     # Assign inputs and outputs of the model
     if use_context is True:
@@ -382,52 +417,61 @@ def generator(n_nodes_in=10,
     # Morphology model
     # -----------------
 
+    # # Dense
+    # morphology_hidden_dim = hidden_dim * (n_nodes_out - 1)
+    # morphology_hidden1 = Dense(morphology_hidden_dim)(all_common_inputs)
+    # morphology_hidden2 = Dense(morphology_hidden_dim)(morphology_hidden1)
+    #
+    # # Reshape
+    # morphology_reshaped = \
+    #     Reshape(target_shape=(n_nodes_out - 1, hidden_dim))(morphology_hidden2)
+    #
+    # # LSTM
+    # morphology_lstm1 = \
+    #     LSTM(input_dim=hidden_dim,
+    #          input_length=n_nodes_out - 1,
+    #          output_dim=hidden_dim,
+    #          W_regularizer=l2(0.1),
+    #          U_regularizer=l2(0.1),
+    #          return_sequences=True)(morphology_reshaped)
+    # morphology_lstm2 = \
+    #     LSTM(input_dim=hidden_dim,
+    #          input_length=n_nodes_out - 1,
+    #          W_regularizer=l2(0.1),
+    #          U_regularizer=l2(0.1),
+    #          output_dim=hidden_dim,
+    #          return_sequences=True)(morphology_lstm1)
+    # # TimeDistributed
+    # morphology_dense = \
+    #     TimeDistributed(Dense(input_dim=hidden_dim,
+    #                           output_dim=n_nodes_out,
+    #                           W_regularizer=l2(0.01),
+    #                           activation='sigmoid'))(morphology_lstm1)
+    #
+    # lambda_args = {'n_nodes': n_nodes_out, 'batch_size': batch_size}
+    # morphology_output = \
+    #     Lambda(masked_softmax,
+    #            output_shape=(n_nodes_out - 1, n_nodes_out),
+    #            arguments=lambda_args)(morphology_dense)
+
     # Dense
-    morphology_hidden_dim = hidden_dim * (n_nodes_out - 1)
+    morphology_hidden_dim = n_nodes_out * (n_nodes_out - 1)
     morphology_hidden1 = Dense(morphology_hidden_dim)(all_common_inputs)
+    # morphology_hidden1 = BatchNormalization()(morphology_hidden1)
     morphology_hidden2 = Dense(morphology_hidden_dim)(morphology_hidden1)
+    # morphology_hidden2 = BatchNormalization()(morphology_hidden2)
+    morphology_hidden3 = Dense(n_nodes_out * (n_nodes_out - 1),
+                               activation='linear')(morphology_hidden2)
 
     # Reshape
     morphology_reshaped = \
-        Reshape(target_shape=(n_nodes_out - 1, hidden_dim))(morphology_hidden2)
-
-    # LSTM
-    morphology_lstm1 = \
-        LSTM(input_dim=hidden_dim,
-             input_length=n_nodes_out - 1,
-             output_dim=hidden_dim,
-             return_sequences=True)(morphology_reshaped)
-    morphology_lstm2 = \
-        LSTM(input_dim=hidden_dim,
-             input_length=n_nodes_out - 1,
-             output_dim=hidden_dim,
-             return_sequences=True)(morphology_lstm1)
-    # TimeDistributed
-    morphology_dense = \
-        TimeDistributed(Dense(input_dim=hidden_dim,
-                              output_dim=n_nodes_out,
-                              activation='sigmoid'))(morphology_lstm2)
+        Reshape(target_shape=(n_nodes_out - 1, n_nodes_out))(morphology_hidden3)
 
     lambda_args = {'n_nodes': n_nodes_out, 'batch_size': batch_size}
     morphology_output = \
         Lambda(masked_softmax_full,
                output_shape=(n_nodes_out - 1, n_nodes_out),
-               arguments=lambda_args)(morphology_dense)
-
-    # # Dense
-    # morphology_hidden_dim = n_nodes_out * (n_nodes_out - 1)
-    # morphology_hidden1 = Dense(morphology_hidden_dim,
-    #                            activation='sigmoid')(all_common_inputs)
-    #
-    # # Reshape
-    # morphology_reshaped = \
-    #     Reshape(target_shape=(n_nodes_out - 1, n_nodes_out))(morphology_hidden1)
-    #
-    # lambda_args = {'n_nodes': n_nodes_out, 'batch_size': batch_size}
-    # morphology_output = \
-    #     Lambda(masked_softmax_full,
-    #            output_shape=(n_nodes_out - 1, n_nodes_out),
-    #            arguments=lambda_args)(morphology_reshaped)
+               arguments=lambda_args)(morphology_reshaped)
 
     # Assign inputs and outputs of the model
     if use_context is True:
@@ -449,53 +493,62 @@ def generator(n_nodes_in=10,
     all_morphology_inputs = merge([all_common_inputs,
                                    geometry_embedding])
 
+    # # Dense
+    # morphology_hidden_dim = hidden_dim * (n_nodes_out - 1)
+    # morphology_hidden1 = Dense(morphology_hidden_dim)(all_morphology_inputs)
+    # morphology_hidden2 = Dense(morphology_hidden_dim)(morphology_hidden1)
+    #
+    # # Reshape
+    # morphology_reshaped = \
+    #     Reshape(target_shape=(n_nodes_out - 1, hidden_dim))(morphology_hidden2)
+    #
+    # # LSTM
+    # morphology_lstm1 = \
+    #     LSTM(input_dim=hidden_dim,
+    #          input_length=n_nodes_out - 1,
+    #          output_dim=hidden_dim,
+    #          W_regularizer=l2(0.1),
+    #          U_regularizer=l2(0.1),
+    #          return_sequences=True)(morphology_reshaped)
+    # morphology_lstm2 = \
+    #     LSTM(input_dim=hidden_dim,
+    #          input_length=n_nodes_out - 1,
+    #          output_dim=hidden_dim,
+    #          W_regularizer=l2(0.1),
+    #          U_regularizer=l2(0.1),
+    #          return_sequences=True)(morphology_lstm1)
+    #
+    # # TimeDistributed
+    # morphology_dense = \
+    #     TimeDistributed(Dense(input_dim=hidden_dim,
+    #                           output_dim=n_nodes_out,
+    #                           W_regularizer=l2(0.01),
+    #                           activation='sigmoid'))(morphology_lstm1)
+    #
+    # lambda_args = {'n_nodes': n_nodes_out, 'batch_size': batch_size}
+    # morphology_output = \
+    #     Lambda(masked_softmax,
+    #            output_shape=(n_nodes_out - 1, n_nodes_out),
+    #            arguments=lambda_args)(morphology_dense)
+
     # Dense
-    morphology_hidden_dim = hidden_dim * (n_nodes_out - 1)
+    morphology_hidden_dim = n_nodes_out * (n_nodes_out - 1)
     morphology_hidden1 = Dense(morphology_hidden_dim)(all_morphology_inputs)
+    # morphology_hidden1 = BatchNormalization()(morphology_hidden1)
     morphology_hidden2 = Dense(morphology_hidden_dim)(morphology_hidden1)
+    # morphology_hidden2 = BatchNormalization()(morphology_hidden2)
+    morphology_hidden3 = Dense(n_nodes_out * (n_nodes_out - 1),
+                               activation='linear')(morphology_hidden2)
 
     # Reshape
     morphology_reshaped = \
-        Reshape(target_shape=(n_nodes_out - 1, hidden_dim))(morphology_hidden2)
-
-    # LSTM
-    morphology_lstm1 = \
-        LSTM(input_dim=hidden_dim,
-             input_length=n_nodes_out - 1,
-             output_dim=hidden_dim,
-             return_sequences=True)(morphology_reshaped)
-    morphology_lstm2 = \
-        LSTM(input_dim=hidden_dim,
-             input_length=n_nodes_out - 1,
-             output_dim=hidden_dim,
-             return_sequences=True)(morphology_lstm1)
-
-    # TimeDistributed
-    morphology_dense = \
-        TimeDistributed(Dense(input_dim=hidden_dim,
-                              output_dim=n_nodes_out,
-                              activation='sigmoid'))(morphology_lstm2)
+        Reshape(target_shape=(n_nodes_out - 1, n_nodes_out))(morphology_hidden1)
 
     lambda_args = {'n_nodes': n_nodes_out, 'batch_size': batch_size}
     morphology_output = \
         Lambda(masked_softmax_full,
                output_shape=(n_nodes_out - 1, n_nodes_out),
-               arguments=lambda_args)(morphology_dense)
-
-    # # Dense
-    # morphology_hidden_dim = n_nodes_out * (n_nodes_out - 1)
-    # morphology_hidden1 = Dense(morphology_hidden_dim,
-    #                            activation='softmax')(all_morphology_inputs)
-    #
-    # # Reshape
-    # morphology_reshaped = \
-    #     Reshape(target_shape=(n_nodes_out - 1, n_nodes_out))(morphology_hidden1)
-    #
-    # lambda_args = {'n_nodes': n_nodes_out, 'batch_size': batch_size}
-    # morphology_output = \
-    #     Lambda(masked_softmax_full,
-    #            output_shape=(n_nodes_out - 1, n_nodes_out),
-    #            arguments=lambda_args)(morphology_reshaped)
+               arguments=lambda_args)(morphology_reshaped)
 
     # Assign inputs and outputs of the model
     if use_context is True:
@@ -511,10 +564,10 @@ def generator(n_nodes_in=10,
                          geometry_input],
                   output=[morphology_output])
 
-    geometry_model.summary()
+    # geometry_model.summary()
     conditional_geometry_model.summary()
     morphology_model.summary()
-    conditional_morphology_model.summary()
+    # conditional_morphology_model.summary()
 
     return geometry_model, \
         conditional_geometry_model, \
@@ -552,16 +605,19 @@ def discriminator(n_nodes_in=10,
     # --------------------
     # Discriminator model
     # -------------------=
-    discriminator_hidden1 = \
-        Dense(hidden_dim)(embedding)
-    discriminator_hidden2 = \
-        Dense(hidden_dim)(discriminator_hidden1)
+    discriminator_hidden1 = Dense(hidden_dim)(embedding)
+    # discriminator_hidden1 = Dropout(0.1)(discriminator_hidden1)
+    discriminator_hidden2 = Dense(hidden_dim)(discriminator_hidden1)
+    # discriminator_hidden2 = Dropout(0.1)(discriminator_hidden2)
+    discriminator_hidden3 = Dense(hidden_dim)(discriminator_hidden2)
+    # discriminator_hidden3 = Dropout(0.1)(discriminator_hidden3)
+
     if train_loss == 'wasserstein_loss':
         discriminator_output = \
-            Dense(1, activation='linear')(discriminator_hidden2)
+            Dense(1, activation='linear')(discriminator_hidden3)
     else:
         discriminator_output = \
-            Dense(1, activation='sigmoid')(discriminator_hidden2)
+            Dense(1, activation='sigmoid')(discriminator_hidden3)
 
     discriminator_model = Model(input=[geometry_input,
                                        morphology_input],
@@ -636,8 +692,8 @@ def discriminator_on_generators(geometry_model,
 
     noise_input = Input(shape=(1, input_dim), name='noise_input')
 
-    prior_geometry_input = Input(shape=(n_nodes_out - 1, 3))
-    prior_morphology_input = Input(shape=(n_nodes_out - 1, n_nodes_in))
+    # prior_geometry_input = Input(shape=(n_nodes_out - 1, 3))
+    # prior_morphology_input = Input(shape=(n_nodes_out - 1, n_nodes_in))
 
     # ------------------
     # Generator outputs
@@ -675,10 +731,27 @@ def discriminator_on_generators(geometry_model,
                                               geometry_output])
         else:
             geometry_output = \
-                morphology_model([noise_input])
+                geometry_model([noise_input])
             morphology_output = \
                 conditional_morphology_model([noise_input,
                                               geometry_output])
+
+    elif conditioning_rule == 'none':
+        # No conditioning
+        if use_context is True:
+            geometry_output = \
+                geometry_model([prior_geometry_input,
+                                prior_morphology_input,
+                                noise_input])
+            morphology_output = \
+                morphology_model([prior_geometry_input,
+                                  prior_morphology_input,
+                                  noise_input])
+        else:
+            geometry_output = \
+                geometry_model([noise_input])
+            morphology_output = \
+                morphology_model([noise_input])
 
     # ---------------------
     # Discriminator output
