@@ -65,11 +65,11 @@ def generator(n_nodes_in=10,
         lambda_args = {'n_nodes': n_nodes_in, 'batch_size': batch_size}
         prior_embedding = \
             Lambda(layers.feature_extractor,
-                   output_shape=(n_nodes_in, 2 * n_nodes_in + 3),
+                   output_shape=(n_nodes_in, 2 * n_nodes_in + 6),
                    arguments=lambda_args)([prior_geometry_input,
                                            prior_morphology_input])
         prior_embedding = \
-            Reshape(target_shape=(1, n_nodes_in * (2 * n_nodes_in + 3)))(prior_embedding)
+            Reshape(target_shape=(1, n_nodes_in * (2 * n_nodes_in + 6)))(prior_embedding)
     # Generate noise input
     noise_input = Input(shape=(1, noise_dim), name='noise_input')
 
@@ -265,7 +265,7 @@ def generator(n_nodes_in=10,
 
     lambda_args = {'n_nodes': n_nodes_out, 'batch_size': batch_size}
     morphology_output = \
-        Lambda(layers.masked_softmax_full,
+        Lambda(layers.masked_softmax,
                output_shape=(n_nodes_out - 1, n_nodes_out),
                arguments=lambda_args)(morphology_reshaped)
 
@@ -342,7 +342,7 @@ def generator(n_nodes_in=10,
 
     lambda_args = {'n_nodes': n_nodes_out, 'batch_size': batch_size}
     morphology_output = \
-        Lambda(layers.masked_softmax_full,
+        Lambda(layers.masked_softmax,
                output_shape=(n_nodes_out - 1, n_nodes_out),
                arguments=lambda_args)(morphology_reshaped)
 
@@ -404,14 +404,15 @@ def discriminator(n_nodes_in=10,
     #                             embedding_dim=embedding_dim)
 
     # Extract features from geometry and morphology
-    lambda_args = {'n_nodes': n_nodes_in, 'batch_size': 2 * batch_size}
+    lambda_args = {'n_nodes': n_nodes_in, 'batch_size': batch_size}
+    both_inputs = merge([geometry_input,
+                         morphology_input], mode='concat')
     embedding = \
         Lambda(layers.feature_extractor,
-               output_shape=(n_nodes_in, 2 * n_nodes_in + 3),
-               arguments=lambda_args)([geometry_input,
-                                       morphology_input])
+               output_shape=(n_nodes_in, 2 * n_nodes_in + 6),
+               arguments=lambda_args)([both_inputs])
     embedding = \
-        Reshape(target_shape=(1, n_nodes_in * (2 * n_nodes_in + 3)))(embedding)
+        Reshape(target_shape=(1, n_nodes_in * (2 * n_nodes_in + 6)))(embedding)
 
     # --------------------
     # Discriminator model

@@ -17,8 +17,8 @@ def plot_example_neuron_from_parent(X_locations, X_parent):
 
     stuff.
     """
-    X_parent = \
-        batch_utils.invert_full_matrix_np(X_parent)
+    # X_parent = \
+    #     batch_utils.invert_full_matrix_np(X_parent)
 
     locations = np.squeeze(X_locations)
     parent = np.squeeze(X_parent).argmax(axis=1) + 1

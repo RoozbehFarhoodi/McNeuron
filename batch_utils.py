@@ -138,9 +138,6 @@ def get_batch(X_parent_cut, batch_size, n_nodes):
 
     X_parent_real = np.reshape(enc.fit_transform(X_parent_cut).toarray(),
                                [batch_size, n_nodes - 1, n_nodes])
-
-    X_parent_real = masked_softmax_full_np(X_parent_real)
-
     return X_parent_real
 
 

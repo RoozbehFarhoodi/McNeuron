@@ -57,7 +57,7 @@ def masked_softmax(input_layer, n_nodes, batch_size):
     output_layer: keras layer object
         (n x 1, n) matrix
     """
-    input_layer = batch_symmetrize(input_layer, batch_size, n_nodes)
+    # input_layer = batch_symmetrize(input_layer, batch_size, n_nodes)
     mask_lower = K.theano.tensor.tril(K.ones((n_nodes - 1, n_nodes)))
     mask_upper = \
         K.theano.tensor.triu(-100. * K.ones((n_nodes - 1, n_nodes)), 1)
@@ -85,6 +85,13 @@ def full_matrix(adjacency, n_nodes):
         (n , n) matrix
     """
     return K.theano.tensor.nlinalg.matrix_inverse(K.eye(n_nodes) - adjacency)
+
+
+def batch_full_matrix(adjacency, n_nodes, batch_size):
+    result, updates = \
+        K.theano.scan(fn=lambda n: full_matrix(adjacency[n, :, :], n_nodes),
+                      sequences=K.arange(batch_size))
+    return result
 
 
 # Masked softmax Lambda layer
@@ -321,24 +328,25 @@ def feature_extractor(inputs,
             - locations
             - distance from imediate parents
     """
-    geometry_input, morphology_input = inputs
-    adjacency = \
-        masked_softmax(morphology_input, n_nodes, batch_size)
+    geometry_input = inputs[:, :, :3]
+    morphology_input = inputs[:, :, 3:]
+
     adjacency = \
         K.concatenate([K.zeros(shape=(batch_size, 1, n_nodes)),
-                       adjacency], axis=1)
+                       morphology_input], axis=1)
+
     full_adjacency = \
-        masked_softmax_full(morphology_input, n_nodes, batch_size)
-    full_adjacency = \
-        K.concatenate([K.zeros(shape=(batch_size, 1, n_nodes)),
-                       full_adjacency], axis=1)
+        batch_full_matrix(adjacency, n_nodes, batch_size)
+
     geometry_input = K.concatenate([K.zeros(shape=(batch_size, 1, 3)),
                                     geometry_input], axis=1)
-    # distance = distance_from_parent(adjacency,
-    #                                 geometry_input,
-    #                                 n_nodes,
-    #                                 batch_size)
+
+    distance = distance_from_parent(adjacency,
+                                    geometry_input,
+                                    n_nodes,
+                                    batch_size)
     features = K.concatenate([adjacency,
                               full_adjacency,
-                              geometry_input], axis=2)
+                              geometry_input,
+                              distance], axis=2)
     return features

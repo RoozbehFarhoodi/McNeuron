@@ -183,8 +183,8 @@ def train_model(training_data=None,
     # ###############
     # Optimizers
     # ###############
-    optim_d = RMSprop(lr=lr_discriminator)
-    optim_g = RMSprop(lr=lr_generator)
+    optim_d = Adagrad()  # RMSprop(lr=lr_discriminator)
+    optim_g = Adagrad()  # RMSprop(lr=lr_generator)
 
     # ##############
     # Train
@@ -286,18 +286,14 @@ def train_model(training_data=None,
                     else:
                         y_gen = np.zeros((X_locations_gen.shape[0], 1, 1))
 
-                    X_locations = np.concatenate((X_locations_real,
-                                                  X_locations_gen), axis=0)
-                    X_parent = np.concatenate((X_parent_real,
-                                               X_parent_gen), axis=0)
-                    y = np.concatenate((y_real, y_gen), axis=0)
-
                     # Update the discriminator
-                    #d_model.summary()
                     disc_loss = \
-                        d_model.train_on_batch([X_locations,
-                                                X_parent], y)
-
+                        d_model.train_on_batch([X_locations_real,
+                                                X_parent_real], y_real)
+                    list_d_loss.append(disc_loss)
+                    disc_loss = \
+                        d_model.train_on_batch([X_locations_gen,
+                                                X_parent_gen], y_gen)
                     list_d_loss.append(disc_loss)
 
                 if verbose:
@@ -340,6 +336,9 @@ def train_model(training_data=None,
                                               conditioning_rule=rule)
 
                 noise_input = np.random.randn(batch_size, 1, input_dim)
+
+                print(noise_input.shape)
+                print(y_real.shape)
 
                 if level == 0:
                     gen_loss = \
