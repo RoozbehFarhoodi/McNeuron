@@ -4,12 +4,11 @@ from __future__ import print_function
 
 import numpy as np
 
-import models_generate_parents as models
-import batch_utils
-import data_transforms
-import McNeuron
-
 from keras.optimizers import RMSprop, Adagrad, Adam
+
+import models2 as models
+import batch_utils
+import plot_utils
 
 import matplotlib.pyplot as plt
 
@@ -43,56 +42,6 @@ def save_model_weights():
     """
     cool stuff.
     """
-
-
-def plot_example_neuron_v2(X_locations, X_parent):
-    """
-    Show an example neuron.
-
-    stuff.
-    """
-    locations = np.squeeze(X_locations)
-    parent = np.squeeze(X_parent).argmax(axis=1) + 1
-
-    M = np.zeros([parent.shape[0] + 1, 7])
-    M[:, 0] = np.arange(1, parent.shape[0] + 2)
-    M[0, 1] = 1
-    M[1:, 1] = 2
-    M[1:, 2:5] = locations
-    M[1:, 6] = parent
-    M[0, 6] = -1
-    neuron_object = McNeuron.Neuron(file_format='Matrix of swc', input_file=M)
-
-    McNeuron.visualize.plot_2D(neuron_object)
-    return neuron_object
-
-
-def plot_example_neuron(X_locations, X_prufer):
-    """
-    Show an example neuron.
-
-    stuff.
-    """
-    locations = np.squeeze(X_locations)
-    prufer = np.squeeze(X_prufer).argmax(axis=1)
-
-    soma = np.array([[0., 0., 0.]])
-    np.append(soma, np.squeeze(locations), axis=0)
-
-    parents = np.array(data_transforms.decode_prufer(list(prufer)))
-    parents_reordered, locations_reordered = \
-        data_transforms.reordering_prufer(parents, np.squeeze(locations))
-
-    prufer_reordered = data_transforms.encode_prufer(list(parents_reordered))
-
-    input_code = dict()
-    input_code['morphology'] = np.array(prufer_reordered)
-    input_code['geometry'] = np.squeeze(locations_reordered)
-    neuron_object = \
-        data_transforms.make_swc_from_prufer_and_locations(input_code)
-
-    McNeuron.visualize.plot_2D(neuron_object)
-    return neuron_object
 
 
 def train_model(training_data=None,
@@ -182,6 +131,7 @@ def train_model(training_data=None,
     for level in range(n_levels):
         # Discriminator
         d_model = models.discriminator(n_nodes_in=n_nodes[level],
+                                       batch_size=batch_size,
                                        train_loss=train_loss)
 
         # Generators and GANs
@@ -208,7 +158,8 @@ def train_model(training_data=None,
             g_model, cg_model, m_model, cm_model = \
                 models.generator(use_context=True,
                                  n_nodes_in=n_nodes[level-1],
-                                 n_nodes_out=n_nodes[level])
+                                 n_nodes_out=n_nodes[level],
+                                 batch_size=batch_size)
             stacked_model = \
                 models.discriminator_on_generators(g_model,
                                                    cg_model,
@@ -309,18 +260,15 @@ def train_model(training_data=None,
                     X_parent_cut = \
                         np.reshape(training_data['morphology']['n'+str(n_nodes[level])][select, :],
                                    [1, (n_nodes[level] - 1) * batch_size])
-
                     X_parent_real = \
                         batch_utils.get_batch(X_parent_cut=X_parent_cut,
                                               batch_size=batch_size,
                                               n_nodes=n_nodes[level])
 
-                    # if train_loss == 'wasserstein_loss':
-                    y_real = -np.ones((X_locations_real.shape[0], 1, 1))
-                    # else:
-                        # y_real = np.ones((X_locations_real.shape[0], 1, 1))
-
-                    #print X_locations_real.shape, X_parent_real.shape, y_real.shape
+                    if train_loss == 'wasserstein_loss':
+                        y_real = -np.ones((X_locations_real.shape[0], 1, 1))
+                    else:
+                        y_real = np.ones((X_locations_real.shape[0], 1, 1))
 
                     X_locations_gen, X_parent_gen = \
                         batch_utils.gen_batch(batch_size=batch_size,
@@ -332,27 +280,23 @@ def train_model(training_data=None,
                                               morph_model=morph_model,
                                               cond_morph_model=cond_morph_model,
                                               conditioning_rule=rule)
-                    # if train_loss == 'wasserstein_loss':
-                    y_gen = np.ones((X_locations_gen.shape[0], 1, 1))
-                    # else:
-                    #     y_gen = np.zeros((X_locations_gen.shape[0], 1, 1))
 
-                    #print X_locations_gen.shape, X_parent_gen.shape, y_gen.shape
+                    if train_loss == 'wasserstein_loss':
+                        y_gen = np.ones((X_locations_gen.shape[0], 1, 1))
+                    else:
+                        y_gen = np.zeros((X_locations_gen.shape[0], 1, 1))
 
                     X_locations = np.concatenate((X_locations_real,
-                                                 X_locations_gen), axis=0)
-
+                                                  X_locations_gen), axis=0)
                     X_parent = np.concatenate((X_parent_real,
                                                X_parent_gen), axis=0)
-
                     y = np.concatenate((y_real, y_gen), axis=0)
 
                     # Update the discriminator
                     #d_model.summary()
                     disc_loss = \
                         d_model.train_on_batch([X_locations,
-                                                X_parent],
-                                               y)
+                                                X_parent], y)
 
                     list_d_loss.append(disc_loss)
 
@@ -450,44 +394,19 @@ def train_model(training_data=None,
                         print ("     Level #{0} Epoch #{1} Batch #{2}".
                                format(level, e, batch_counter))
 
-                        full_adj_to_adj = \
-                            batch_utils.invert_full_matrix_np(X_parent_gen[0, :, :])
-
-                        # neuron_object = \
-                        #     plot_example_neuron_v2(X_locations_gen[0, :, :],
-                        #                            full_adj_to_adj)
-
                         neuron_object = \
-                            plot_example_neuron_v2(X_locations_gen[0, :, :],
-                                                   full_adj_to_adj)
+                            plot_utils.plot_example_neuron_from_parent(
+                                X_locations_gen[0, :, :],
+                                X_parent_gen[0, :, :])
 
-                        plt.show()
-                        plt.figure(figsize=(10, 5))
-                        plt.subplot(1, 2, 1)
-                        plt.imshow(X_parent_real[0, :, :],
-                                   interpolation='none',
-                                   cmap='Greys')
-                        plt.subplot(1, 2, 2)
-                        plt.imshow(X_parent_gen[0, :, :],
-                                   interpolation='none',
-                                   cmap='Greys')
+                        plot_utils.plot_adjacency(X_parent_real,
+                                                  X_parent_gen)
 
-                        plt.figure(figsize=(10, 5))
-                        plt.subplot(1, 2, 1)
-                        plt.imshow(batch_utils.invert_full_matrix_np(X_parent_real[0, :, :]),
-                                   interpolation='none',
-                                   cmap='Greys')
-                        plt.subplot(1, 2, 2)
-                        plt.imshow(batch_utils.invert_full_matrix_np(X_parent_gen[0, :, :]),
-                                   interpolation='none',
-                                   cmap='Greys')
                 # Display loss trace
                 if verbose:
-                    plt.figure(figsize=(3, 2))
-                    plt.plot(list_d_loss)
-                    plt.show()
+                    plot_utils.plot_loss_trace(list_d_loss)
 
-                # Save models
+                #  Save models
                 geom_model[level] = g_model
                 cond_geom_model[level] = cg_model
                 morph_model[level] = m_model
