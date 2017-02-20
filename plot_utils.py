@@ -3,6 +3,7 @@
 
 # Imports
 import numpy as np
+import numpy.linalg as LA
 import matplotlib.pyplot as plt
 
 # Local imports
@@ -22,12 +23,16 @@ def plot_example_neuron_from_parent(X_locations, X_parent):
 
     locations = np.squeeze(X_locations)
     parent = np.squeeze(X_parent).argmax(axis=1) + 1
-
+    full = np.zeros([parent.shape[0]+1, parent.shape[0] + 1])
+    full[range(1, parent.shape[0]+1), parent-1] = 1
+    full = LA.inv(np.eye(parent.shape[0]+1) - full)
+    locations = np.dot(full, np.append(np.zeros([1,3]), locations, axis=0))
     M = np.zeros([parent.shape[0] + 1, 7])
     M[:, 0] = np.arange(1, parent.shape[0] + 2)
     M[0, 1] = 1
     M[1:, 1] = 2
-    M[1:, 2:5] = locations
+    #M[1:, 2:5] = locations
+    M[:, 2:5] = locations
     M[1:, 6] = parent
     M[0, 6] = -1
     neuron_object = McNeuron.Neuron(file_format='Matrix of swc', input_file=M)
